@@ -1,5 +1,5 @@
-#ifndef RPS_ARRAY_H
-#define RPS_ARRAY_H
+#ifndef RPS_ARRAY_H_INCLUDED
+#define RPS_ARRAY_H_INCLUDED
 
 #include "rps_core.h"
 #include "rps_palloc.h"

@@ -1,5 +1,5 @@
-#ifndef RPS_CORE_H
-#define RPS_CORE_H
+#ifndef RPS_CORE_H_INCLUDED
+#define RPS_CORE_H_INCLUDED
 
 #include <stdio.h>
 #include <stdlib.h>

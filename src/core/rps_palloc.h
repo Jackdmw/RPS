@@ -1,8 +1,8 @@
-#ifndef RPS_PALLOC_H
-#define RPS_PALLOC_H
+#ifndef RPS_PALLOC_H_INCLUDED
+#define RPS_PALLOC_H_INCLUDED
 
 #include "rps_core.h"
-
+#include <string.h>
 
 #define RPS_MAX_ALLOC_FROM_POOL  (4095)  // 最大分配大小（小于页大小）
 #define RPS_MIN_POOL_SIZE  (sizeof(rps_pool_t) + 8) // 最小池大小（必须能容纳一个 rps_pool_t）
@@ -39,5 +39,6 @@ rps_pool_t *rps_create_pool(size_t size);
 
 void * rps_palloc(rps_pool_t *pool, size_t size);
 void rps_destroy_pool(rps_pool_t *pool);
+void * rps_pcalloc(rps_pool_t *pool,size_t size);
 
 #endif

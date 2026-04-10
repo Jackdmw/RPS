@@ -84,3 +84,15 @@ void  rps_destroy_pool(rps_pool_t *pool){
         pool = next;
     }
 }
+
+/**
+ * 分配内存，同时，对内存块清零
+ */
+void * rps_pcalloc(rps_pool_t *pool,size_t size){
+    void * p = rps_palloc(pool,size);
+    if (p!=NULL)
+    {
+        memset(p,0,size);
+    }
+    return p;
+}
