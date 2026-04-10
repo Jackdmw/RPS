@@ -32,6 +32,22 @@ rps_array_t *rps_array_create(rps_pool_t *pool, rps_uint_t n, size_t size){
 }
 
 /**
+ * 数组初始化，用于结构体嵌套情况
+ * 
+ */
+rps_int_t rps_array_init(rps_array_t *array,rps_pool_t * pool,rps_uint_t n, size_t size){
+    if ((array->elts = rps_palloc(pool,n*size)) == NULL)
+    {
+        return RPS_ERROR;
+    }
+    array -> nelts = 0;
+    array -> size  = size;
+    array -> pool  = pool;
+    array -> nalloc = n ;
+    return RPS_OK;
+}
+
+/**
  * 数组增长
  * param array：数组管理单元
  */

@@ -25,7 +25,8 @@ typedef struct rps_module_s  rps_module_t;
 typedef struct rps_conf_s    rps_conf_t;
 typedef struct rps_cycle_s   rps_cycle_t;
 
-
+#define RPS_OK     0
+#define RPS_ERROR -1
 
 
 #endif

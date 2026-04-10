@@ -12,6 +12,7 @@ typedef struct {
 }rps_array_t;
 
 rps_array_t *rps_array_create(rps_pool_t *pool, rps_uint_t n, size_t size);
+rps_int_t  rps_array_init(rps_array_t *array,rps_pool_t* pool, rps_uint_t n,size_t size);
 void *rps_array_push(rps_array_t *array);
 
 

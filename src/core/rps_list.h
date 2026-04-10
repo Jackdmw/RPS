@@ -22,7 +22,7 @@ typedef struct {
 } rps_list_t;
 
 rps_list_t * rps_list_create(rps_pool_t* pool,rps_uint_t n,size_t size);
-void rps_list_init(rps_list_t* list,rps_uint_t n,size_t size);
+rps_int_t rps_list_init(rps_list_t* list,rps_pool_t *pool,rps_uint_t n,size_t size);
 void *rps_list_push(rps_list_t *list);
 
 #endif
