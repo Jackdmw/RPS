@@ -10,10 +10,32 @@
 #define RPS_EVENT_MODULE    1
 #define RPS_HTTP_MODULE     2
 
-
 typedef struct rps_module_s    rps_module_t;
 typedef struct rps_command_s   rps_command_t;
 typedef struct rps_conf_s      rps_conf_t;
+
+#define RPS_CONF_NOARGS             0x00000001
+#define RPS_CONF_TAKE1              0x00000002
+#define RPS_CONF_TAKE2              0x00000004
+#define RPS_CONF_TAKE3              0x00000008
+#define RPS_CONF_TAKE4              0x00000010
+#define RPS_CONF_TAKE5              0x00000020
+#define RPS_CONF_TAKE6              0x00000040
+#define RPS_CONF_TAKE7              0x00000080
+
+#define RPS_CONF_MAX_ARGS           8
+#define RPS_CONF_TAKE12             (RPS_CONF_TAKE1|RPS_CONF_TAKE2)
+#define RPS_CONF_TAKE13             (RPS_CONF_TAKE1|RPS_CONF_TAKE3)
+
+#define RPS_CONF_TAKE23             (RPS_CONF_TAKE2|RPS_CONF_TAKE3)
+#define RPS_CONF_TAKE123            (RPS_CONF_TAKE12|RPS_CONF_TAKE3)
+#define RPS_CONF_TAKE1234           (RPS_CONF_TAKE12|RPS_CONF_TAKE3|RPS_CONF_TAKE4)
+
+#define RPS_CONF_ARGS_NUMBER        
+
+
+
+
 
 struct  rps_command_s {
     rps_str_t               name;    // 命令名称
@@ -60,20 +82,11 @@ struct rps_conf_s {
     rps_module_t       *module;    // 模块指针
 };
 
-struct rps_cycle_s{
-    void            ****conf_ctx;
-    rps_pool_t         *pool;
-    
-    rps_array_t         modules;
 
-    rps_array_t         listening;
-    rps_list_t          open_files;
-
-    rps_str_t           conf_file;
-    rps_str_t           root;
-
-};
-
-
+typedef struct {
+    rps_str_t    name;                                    /* 模块名称，例如 "core" */
+    void      *(*create_conf)(rps_cycle_t *cycle);        /* 创建配置结构体 */
+    char      *(*init_conf)(rps_cycle_t *cycle, void *conf); /* 初始化配置（填默认值） */
+}rps_core_module_ctx_t;
 
 #endif
