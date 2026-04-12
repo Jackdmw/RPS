@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <errno.h>
 
 /* 1. 基础数值类型 */
 typedef uintptr_t  rps_uint_t;
@@ -17,10 +20,15 @@ typedef unsigned char   u_char;
 /* 3. 内存池前向声明（具体的实现在 palloc.h） */
 typedef struct rps_pool_s  rps_pool_t;
 
-/* 4. 模块和配置的前向声明 (具体实现在 module.h )*/
+/* 4. 模块的前向声明 (具体实现在 module.h )*/
 typedef struct rps_module_s  rps_module_t;
-typedef struct rps_conf_s    rps_conf_t;
 typedef struct rps_cycle_s   rps_cycle_t;
+
+typedef struct rps_conf_s    rps_conf_t;
+typedef struct rps_command_s  rps_command_t;
+
+
+
 
 /* 5. 日志的前向声明，具体实现在log.h */
 typedef struct rps_log_s rps_log_t;

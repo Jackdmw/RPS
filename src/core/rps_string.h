@@ -10,8 +10,11 @@ typedef struct {
 } rps_str_t;
 
 #define rps_string(str) {sizeof(str)-1,(u_char*)str}
+#define rps_null_string  {0,NULL}
+
 
 #define rps_cpymem(p,str,n) p = (memcpy(p,str,n) + n);
+
 
 
 #endif
