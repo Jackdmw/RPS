@@ -39,6 +39,14 @@
 #define RPS_CONF_UNSET_SIZE  (size_t) -1
 #define RPS_CONF_UNSET_MSEC  (rps_msec_t) -1
 
+#define RPS_CONF_OK          0
+#define RPS_CONF_ERROR       1
+#define RPS_CONF_BLOCK_START 2   // {
+#define RPS_CONF_BLOCK_END   3   // }
+#define RPS_CONF_STRING      4
+#define RPS_CONF_COMMENT     5
+#define RPS_CONF_FILE_DONE   6   // EOF
+
 /* 如果当前值是 Unset，则填入 default 值，否则保留用户配置的值 */
 #define rps_conf_init_value(conf, default) \
     if (conf == RPS_CONF_UNSET) {          \
@@ -75,17 +83,20 @@ struct  rps_command_s {
 #endif
 
 struct rps_conf_s {
-    rps_str_t           file_name;      // 配置文件名称
-    rps_array_t        *args;           // 参数数组
+    rps_str_t           file_name;      // 配置文件名称(path)
+    rps_file_t         *file;           // 文件句柄
+    rps_array_t        *args;           // 存放当前行解析出的词（rps_str_t）
     rps_cycle_t        *cycle;          // 当前cycle
     rps_pool_t         *pool;           // 配置使用的内存池
 
     void               *ctx;            /* 模块上下文 */
     
 
-    void               *conf;      // 配置结构体指针
-    rps_module_t       *module;    // 模块指针
+    rps_uint_t          module_type;  // 当前正在解析的模块类型（如 RPS_CORE_MODULE）
+    rps_uint_t          cmd_type;     // 当前指令的合法层级（如 RPS_MAIN_CONF）
+    rps_uint_t          cf_line;      // 配置文件的行数
 };
+
 
 
 
