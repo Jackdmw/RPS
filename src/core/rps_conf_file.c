@@ -25,7 +25,7 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
     b = cf->conf_file->buffer;
 
     const u_char *p = b->pos;
-    u_char *start;
+    u_char *start = NULL;
     size_t length = 0;
     status = RPS_CONF_STATUS_PREPARE;
 
@@ -64,7 +64,7 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
                     status = RPS_CONF_STATUS_QUOTED;
                 }
                 else{
-                    rps_log_error(RPS_LOG_ERR,cf->log,0,"文件出现错误字符,位置:%lu行",cf->conf_file->line);
+                    rps_log_error(RPS_LOG_ERR,cf->log,0,"unexpected letter in word,file:%s,line:%lu\n",cf->file_name,cf->conf_file->line);
                     return RPS_CONF_ERROR;
                 }
                 break;
@@ -101,7 +101,7 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
                     status = RPS_CONF_STATUS_WORD_COMMENT;
                 }
                 else {
-                    rps_log_error(RPS_LOG_ERR,cf->log,0,"unexpected letter in word,line:%lu\n",cf->conf_file->line);
+                    rps_log_error(RPS_LOG_ERR,cf->log,0,"unexpected letter in word,file:%s,line:%lu\n",cf->file_name,cf->conf_file->line);
                     return RPS_ERROR;
                 }
                 break;
@@ -113,6 +113,9 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
                     b ->pos = p + 1;
                     return RPS_OK;
                 }
+                if (ch == '\n'){
+                    cf->conf_file->line ++;
+                }
                 else {
                     length ++;
                 }
@@ -121,6 +124,7 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
             case RPS_CONF_STATUS_WORD_COMMENT:
                 if (ch == '\n'){
                     b->pos = p;
+                    cf->conf_file->line ++;
                     return RPS_OK;
                 }
                 break;
@@ -128,10 +132,14 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
         p++;
     }
     if (status == RPS_CONF_STATUS_QUOTED){
-        rps_log_error(RPS_LOG_EMERG,cf->log,0,"expect \" with quoted ");
+        rps_log_error(RPS_LOG_EMERG,cf->log,0,"expect \" with quoted ,file:%s",cf->file_name);
         return RPS_ERROR;
     }
-
+    if (status == RPS_CONF_STATUS_WORD){
+        rps_word_push(cf,length,start);
+        b -> pos =p;
+        return RPS_OK;
+    }
     b -> pos = p;
     return RPS_CONF_FILE_DONE;
 }
