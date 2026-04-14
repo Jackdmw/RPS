@@ -2,7 +2,8 @@
 #define _RPS_CONF_FILE_H_INCLUDED_
 
 #include "rps_core.h"
-
+#include "rps_buf.h"
+#include "rps_file.h"
 
 #define RPS_CONF_NOARGS             0x00000001
 #define RPS_CONF_TAKE1              0x00000002
@@ -44,8 +45,17 @@
 #define RPS_CONF_BLOCK_START 2   // {
 #define RPS_CONF_BLOCK_END   3   // }
 #define RPS_CONF_STRING      4
-#define RPS_CONF_COMMENT     5
+#define RPS_CONF_SEMICOLON   5
 #define RPS_CONF_FILE_DONE   6   // EOF
+
+#define RPS_CONF_STATUS_PREPARE             0
+#define RPS_CONF_STATUS_PREPARE_COMMENT     1
+
+#define RPS_CONF_STATUS_QUOTED              2
+#define RPS_CONF_STATUS_WORD                3
+#define RPS_CONF_STATUS_WORD_COMMENT        4
+
+
 
 /* 如果当前值是 Unset，则填入 default 值，否则保留用户配置的值 */
 #define rps_conf_init_value(conf, default) \
@@ -82,22 +92,32 @@ struct  rps_command_s {
 #define offsetof(p_type, field)  ((size_t) &((p_type *) 0)->field)
 #endif
 
+typedef struct {
+    rps_file_t          file;
+    rps_buf_t          *buffer;
+    rps_buf_t          *dump;
+    rps_uint_t          line;
+
+}rps_conf_file_t; 
+
+
+
 struct rps_conf_s {
     rps_str_t           file_name;      // 配置文件名称(path)
-    rps_file_t         *file;           // 文件句柄
     rps_array_t        *args;           // 存放当前行解析出的词（rps_str_t）
     rps_cycle_t        *cycle;          // 当前cycle
     rps_pool_t         *pool;           // 配置使用的内存池
-
+    rps_conf_file_t    *conf_file;           
+    rps_log_t          *log;
     void               *ctx;            /* 模块上下文 */
     
 
     rps_uint_t          module_type;  // 当前正在解析的模块类型（如 RPS_CORE_MODULE）
     rps_uint_t          cmd_type;     // 当前指令的合法层级（如 RPS_MAIN_CONF）
-    rps_uint_t          cf_line;      // 配置文件的行数
 };
 
 
+char *rps_conf_parse(rps_conf_t *cf,rps_str_t *filename);
 
 
 #endif
