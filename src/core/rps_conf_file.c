@@ -29,39 +29,38 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
     size_t length = 0;
     status = RPS_CONF_STATUS_PREPARE;
 
-    while(p < b->pos){
+    while(p < b -> last){
+        u_char ch = *p;
         switch(status){
             // 准备阶段
             case RPS_CONF_STATUS_PREPARE:
-                if(p == '#'){
+                if(ch == '#'){
                     status = RPS_CONF_STATUS_PREPARE_COMMENT;
                 }
-                else if (p == ' ' || p == '\t'){
-                    break;
-                }
-                else if (p == '\n'){
+                else if (ch == ' ' || ch == '\t'||ch == '\n'){
+                    if(ch == '\n')
                     cf -> conf_file -> line ++;
                 }
-                else if(p == ';'){
-                    b->pos = p+1;
+                else if(ch == ';'){
+                    b->pos = p + 1;
                     return RPS_CONF_SEMICOLON;
                 }
-                else if (p == '{'){
-                    b -> pos = p+1;
+                else if (ch == '{'){
+                    b -> pos = p + 1;
                     return RPS_CONF_BLOCK_START;
                 }
-                else if (p == '}'){
-                    b -> pos = p+1;
+                else if (ch == '}'){
+                    b -> pos = p + 1;
                     return RPS_CONF_BLOCK_END;
                 }
-                else if (rps_is_a_letter(p)){
+                else if (rps_is_a_letter(ch)){
                     start = p;
                     length ++;
                     status = RPS_CONF_STATUS_WORD;
                 }
-                else if (p == '"'){
-                    start = p;
-                    length ++;
+                else if (ch == '"'){
+                    start = p + 1;
+                    length = 0;
                     status = RPS_CONF_STATUS_QUOTED;
                 }
                 else{
@@ -71,7 +70,7 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
                 break;
             // 准备中的注释阶段
             case RPS_CONF_STATUS_PREPARE_COMMENT:
-                if(p == '\n'){
+                if(ch == '\n'){
                     status = RPS_CONF_STATUS_PREPARE;
                     cf -> conf_file -> line ++;
                 }
@@ -79,37 +78,37 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
 
             // 正常单词或者数字
             case RPS_CONF_STATUS_WORD:
-                if (rps_is_a_letter(p)){
+                if (rps_is_a_letter(ch)){
                     length ++;
                 }
-                else if (p == ' ' || p == '\t'|| p == '\n'){
+                else if (ch == ' ' || ch == '\t'|| ch == '\n'){
                     rps_word_push(cf,length,start);
                     b->pos = p+1;
 
-                    if(p == '\n'){
+                    if(ch == '\n'){
                        cf -> conf_file -> line ++;
                     }
-                    
+
                     return RPS_OK;
                 }
-                else if (p == ';'|| p == '{' || p == '}'){
+                else if (ch == ';'|| ch == '{' || ch == '}'){
                     rps_word_push(cf,length,start);
                     b->pos = p;
                     return RPS_OK;
                 }
-                else if (p == '#'){
+                else if (ch == '#'){
                     rps_word_push(cf,length,start);
                     status = RPS_CONF_STATUS_WORD_COMMENT;
                 }
                 else {
-                    rps_log_error(RPS_LOG_ERR,cf->log,0,"文件出现错误字符,位置:%lu行",cf->conf_file->line);
+                    rps_log_error(RPS_LOG_ERR,cf->log,0,"unexpected letter in word,line:%lu\n",cf->conf_file->line);
                     return RPS_ERROR;
                 }
                 break;
 
             // 字符串
             case RPS_CONF_STATUS_QUOTED:
-                if (p == '"'){
+                if (ch == '"'){
                     rps_word_push(cf,length,start);
                     b ->pos = p + 1;
                     return RPS_OK;
@@ -120,13 +119,19 @@ static rps_int_t rps_conf_read_token(rps_conf_t *cf){
                 break;
             // 单词后面的注释
             case RPS_CONF_STATUS_WORD_COMMENT:
-                if (p == '\n'){
+                if (ch == '\n'){
+                    b->pos = p;
                     return RPS_OK;
                 }
                 break;
         }
         p++;
     }
+    if (status == RPS_CONF_STATUS_QUOTED){
+        rps_log_error(RPS_LOG_EMERG,cf->log,0,"expect \" with quoted ");
+        return RPS_ERROR;
+    }
+
     b -> pos = p;
     return RPS_CONF_FILE_DONE;
 }
