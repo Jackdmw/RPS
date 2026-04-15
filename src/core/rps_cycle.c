@@ -23,7 +23,7 @@ rps_init_cycle(rps_cycle_t *old_cycle){
     if (pool == NULL) {
         rps_log_error(RPS_LOG_EMERG,log,0,"[file]:%s [LINE]: %d 创建cycle内存池失败",__FILE__,__LINE__);
     }
-
+    pool->log = log;
     cycle = (rps_cycle_t*)rps_pcalloc(pool,sizeof(rps_cycle_t));
     if (cycle == NULL) {
         rps_destroy_pool(pool);

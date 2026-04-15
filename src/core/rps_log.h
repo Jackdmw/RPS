@@ -31,8 +31,6 @@ struct rps_log_s{
 void rps_log_error(rps_uint_t level, rps_log_t *log, rps_err_t err, const char *fmt, ...);
 rps_log_t *rps_log_init(rps_str_t *prefix);
 
-#define rps_log_debug0(level, log, err, fmt) \
-    if ((log)->log_level & level)            \
-        rps_log_error(RPS_LOG_DEBUG, log, err, fmt)
+
 
 #endif

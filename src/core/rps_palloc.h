@@ -30,7 +30,7 @@ struct rps_pool_s {
     size_t                max;     // 阈值：超过这个值就进“大块分配”
     struct rps_pool_s    *current; // 指向当前可用的块（优化搜索速度）
     rps_pool_large_t     *large;   // 大块内存链表
-    // rps_log_t         *log;     // 可选：关联日志
+    rps_log_t            *log;     // 可选：关联日志
 };
 
 typedef struct rps_pool_s  rps_pool_t;

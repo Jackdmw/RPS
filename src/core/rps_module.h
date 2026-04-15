@@ -1,9 +1,7 @@
 #ifndef RPS_MODULE_H_INCLUDED
 #define RPS_MODULE_H_INCLUDED
 #include "rps_core.h"
-#include "rps_palloc.h"
-#include "rps_array.h"
-#include "rps_list.h"
+#include "rps_config.h"
 
 
 #define RPS_CORE_MODULE     0
@@ -11,11 +9,6 @@
 #define RPS_HTTP_MODULE     2
 
 typedef struct rps_module_s    rps_module_t;
-typedef struct rps_command_s   rps_command_t;
-
-
-
-
 
 struct rps_module_s {
     rps_uint_t              index;       // 模块全局数组索引
@@ -38,7 +31,14 @@ struct rps_module_s {
 };
 
 
+rps_int_t  rps_preinit_modules(void);
+rps_int_t  rps_cycle_modules(rps_cycle_t *cycle);
+rps_int_t  rps_init_modules(rps_cycle_t *cycle);
+rps_int_t  rps_count_modules(rps_cycle_t *cycle,rps_uint_t type);
 
 
+extern rps_module_t     *rps_modules[];
+extern rps_uint_t        rps_max_module;
+extern char             *rps_module_names[];
 
 #endif

@@ -21,6 +21,10 @@ struct rps_cycle_s {
     
     rps_str_t                 conf_file;    // 配置文件路径 "rps.conf"
     rps_str_t                 prefix;       // 程序安装路径
+
+    rps_str_t                 prefix;      // 工作目录前缀
+    rps_str_t                 conf_file;   // 配置文件路径
+    rps_str_t                 conf_param;  // -g 传的内联配置
 };
 
 

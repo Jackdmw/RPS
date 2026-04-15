@@ -4,6 +4,8 @@
 #include "rps_core.h"
 #include "rps_module.h"
 
+extern rps_module_t rps_core_module;
+
 typedef struct {
     rps_uint_t     daemon;          //是否开启守护进程
     rps_uint_t     worker_processes;//工作进程数

@@ -1,19 +1,28 @@
 #ifndef _RPS_FILE_H_INCLUDED_
 #define _RPS_FILE_H_INCLUDED_
 
+#include <sys/types.h>  /* 提供 off_t */
+#include <sys/stat.h>   /* 提供 struct stat */
+#include <unistd.h>     /* 提供 read, write, close */
+#include <fcntl.h>      /* 提供 open, O_RDONLY 等标志 */
+
+
 #include "rps_core.h"
 
 
 typedef int  rps_fd_t;
 
-struct rps_file_s{
-    rps_fd_t        fd;
-    rps_str_t       name;
-   // struct stat     info;
+struct rps_file_s {
+    rps_fd_t            fd;
+    rps_str_t           name;
+    off_t               offset;     /* 当前读写位置 */
+    
+    struct stat         info;       /* 文件元数据（大小、修改时间） */
+    rps_log_t          *log;
 
-    rps_log_t       *log;
-
-    unsigned        directio:1;
+    /* Nginx 风格的标志位 */
+    unsigned            directio:1; /* 是否启用 O_DIRECT */
+    unsigned            valid_info:1; /* 标记 info 是否已被 fstat 填充 */
 };
 
 struct rps_open_file_s{
@@ -26,7 +35,7 @@ struct rps_open_file_s{
     void                *data;
 };
 
-rps_fd_t rps_open_file(rps_str_t path);
-rps_int_t rps_write_fd();
+#define  rps_open_file(name, mode, access)  open((const char *) name, mode, access)
 
+ssize_t rps_read_file(rps_file_t *file, u_char *buf, size_t size, off_t offset);
 #endif
