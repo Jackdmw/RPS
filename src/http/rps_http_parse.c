@@ -1,5 +1,6 @@
 #include "rps_http_core.h"
 #include "core/rps_connection.h"
+#include "http/rps_http_phases.h"
 
 #define RPS_HTTP_PARSE_STARTLINE                    0
 #define RPS_HTTP_PARSE_CRLF                         1
@@ -139,7 +140,7 @@ rps_int_t rps_http_parse_request_line(rps_http_request_t *r){
                     rps_strcmp_with_cstr(arg, "CONNECT") == RPS_STRING_EQUAL ||
                     rps_strcmp_with_cstr(arg, "PATCH") == RPS_STRING_EQUAL ||
                     rps_strcmp_with_cstr(arg, "TRACE") == RPS_STRING_EQUAL ||
-                    rps_strcmp_with_cstr(arg, "OPTIONS") == RPS_STRING_EQUAL ||){
+                    rps_strcmp_with_cstr(arg, "OPTIONS") == RPS_STRING_EQUAL){
                         r -> method = arg;
                     }
             }
@@ -179,9 +180,14 @@ rps_int_t rps_http_parse_request_line(rps_http_request_t *r){
 rps_int_t rps_http_parse_headers(rps_http_request_t *r){
     rps_buf_t               *buf;
     u_char                  *pos;
+    rps_str_t                key;
+    rps_str_t                value;
+    rps_uint_t               i;
+    rps_uint_t               status;
+    rps_http_header_kv_t    *new_header;
     u_char                  *one_header;/*新header行 */
     
-    buf = r -> reading_body;
+    buf = r -> request_body;
     pos = buf -> pos;
     for (one_header = pos; pos < buf -> last; pos ++){
         if (pos[0] == '\r' && pos[1] == '\n'){
@@ -189,8 +195,54 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
                 return RPS_HTTP_PARSE_OK;    
             }
 
-            for ()
+            status = 0;
+            key .data = one_header;
+            for (i = 0; one_header + i < pos; i++){
+                if (one_header[i] == ':'){
+                    key.len = i;
+                    status = 1;
+                    i++;
+                    break;
+                }
+            }
+            if (status == 0){
+                return RPS_HTTP_PARSE_ERROR;
+            }
+
+            while (one_header[i] == ' ')
+                i++;
+            value.data = one_header + i;
+            value.len = (rps_uint_t)pos - (rps_uint_t)(one_header + i);
+            
+            rps_str_lowercase(key);
+            if (rps_strcmp_with_cstr(key, "host") == RPS_STRING_EQUAL){
+                r -> headers_in.host.value = value;
+            }
+            else if (rps_strcmp_with_cstr(key, "user_agent") == RPS_STRING_EQUAL){
+                r -> headers_in.user_agent.value = value;
+            }
+            else if (rps_strcmp_with_cstr(key, "content_type") == RPS_STRING_EQUAL){
+                r -> headers_in.content_type.value = value;
+            }
+            else if (rps_strcmp_with_cstr(key, "content_length") == RPS_STRING_EQUAL){
+                r -> headers_in.content_length.value = value;
+                r -> headers_in.content_length_n = rps_atoi(value.data,value.len);
+                
+                if (r->headers_in.content_length_n == RPS_ERROR){
+                    return RPS_HTTP_PARSE_ERROR;
+                }
+            }
+            else if (rps_strcmp_with_cstr(key, "connection") == RPS_STRING_EQUAL){
+                r -> headers_in.connection.value =value;
+            }
+            else {
+                new_header = rps_list_push(&r -> headers_in.headers);
+                new_header->key = key;
+                new_header -> value = value;
+            }
+
+            one_header = pos + 2;
         }
     }
-    
+    return RPS_HTTP_PARSE_EAGIN;
 }

@@ -3,11 +3,13 @@
 
 #include "core/rps_array.h"
 #include "core/rps_config.h"
-
+#include "http/rps_http_phases.h"
 
 typedef struct {
-    rps_array_t   servers;       // rps_http_core_srv_conf_t *
-    rps_uint_t    client_max_body_size;
+    rps_array_t                 servers;       // rps_http_core_srv_conf_t *
+    rps_uint_t                  client_max_body_size;
+    rps_http_phase_t            phases[RPS_HTTP_PHASE_NUM];
+    rps_http_phase_engine_t     phase_engine;
 } rps_http_core_main_conf_t;
 
 // server {} 级配置

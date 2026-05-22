@@ -138,27 +138,7 @@ typedef struct rps_http_request_s {
 
 
 
-// 阶段定义
-typedef enum {
-    RPS_HTTP_POST_READ_PHASE = 0,
-    RPS_HTTP_SERVER_REWRITE_PHASE,
-    RPS_HTTP_FIND_CONFIG_PHASE,
-    RPS_HTTP_REWRITE_PHASE,
-    RPS_HTTP_POST_REWRITE_PHASE,
-    RPS_HTTP_PREACCESS_PHASE,
-    RPS_HTTP_ACCESS_PHASE,
-    RPS_HTTP_POST_ACCESS_PHASE,
-    RPS_HTTP_PRECONTENT_PHASE,
-    RPS_HTTP_CONTENT_PHASE,
-    RPS_HTTP_LOG_PHASE,
-} rps_http_phases;
 
-typedef rps_int_t (*rps_http_handler_pt)(rps_http_request_t *r);
-
-typedef struct {
-    rps_http_handler_pt  *handlers;   // 按顺序执行
-    rps_uint_t            n;
-} rps_http_phase_t;
 
 
 // 创建、销毁
@@ -169,15 +149,13 @@ void rps_http_close_request(rps_http_request_t *r);
 rps_int_t rps_http_parse_request_line(rps_http_request_t *r);
 rps_int_t rps_http_parse_headers(rps_http_request_t *r);
 
-// 阶段引擎
-rps_int_t rps_http_phase_engine(rps_http_request_t *r);
+
 
 // 发送响应
 rps_int_t rps_http_send_header(rps_http_request_t *r);
 rps_int_t rps_http_send_body(rps_http_request_t *r, rps_buf_t *body);
 rps_int_t rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out);
 
-// 注册阶段 handler（由 http_core 的 postconfiguration 调用）
-void rps_http_register_phase_handler(rps_uint_t phase, rps_http_handler_pt handler);
+
 
 #endif

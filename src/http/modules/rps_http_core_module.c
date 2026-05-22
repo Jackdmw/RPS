@@ -253,13 +253,18 @@ char *rps_set_location_block(rps_conf_t *cf,rps_command_t *cmd,void *conf){
 }
 void *rps_http_core_create_main_conf(rps_conf_t * cf){
     rps_http_core_main_conf_t               *hcmcf;
-
+    rps_uint_t                               i;
     hcmcf = rps_palloc(cf -> pool, sizeof(rps_http_core_main_conf_t));
     if(hcmcf == NULL){
         return NULL;
     }
     if (rps_array_init(&hcmcf-> servers,cf -> pool, 5, sizeof(void*))== RPS_ERROR){
         return NULL;
+    }
+    for (i = 0; i < RPS_HTTP_PHASE_NUM; i++){
+        if (rps_array_init(hcmcf -> phases + i, cf -> pool, 1, sizeof(rps_http_handler_pt)) == RPS_ERROR){
+            return NULL;
+        }
     }
     hcmcf -> client_max_body_size = RPS_CONF_UNSET_UINT;
     return hcmcf;
