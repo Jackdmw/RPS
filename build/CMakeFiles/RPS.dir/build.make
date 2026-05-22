@@ -307,10 +307,24 @@ CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.s"
 	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/jack/RPS/src/http/modules/rps_http_core_module.c -o CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.s
 
+CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o: CMakeFiles/RPS.dir/flags.make
+CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o: /home/jack/RPS/src/http/modules/rps_http_proxy_module.c
+CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o: CMakeFiles/RPS.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building C object CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o -MF CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o.d -o CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o -c /home/jack/RPS/src/http/modules/rps_http_proxy_module.c
+
+CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.i"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/jack/RPS/src/http/modules/rps_http_proxy_module.c > CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.i
+
+CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.s"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/jack/RPS/src/http/modules/rps_http_proxy_module.c -o CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.s
+
 CMakeFiles/RPS.dir/src/http/rps_http_module.c.o: CMakeFiles/RPS.dir/flags.make
 CMakeFiles/RPS.dir/src/http/rps_http_module.c.o: /home/jack/RPS/src/http/rps_http_module.c
 CMakeFiles/RPS.dir/src/http/rps_http_module.c.o: CMakeFiles/RPS.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_18) "Building C object CMakeFiles/RPS.dir/src/http/rps_http_module.c.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Building C object CMakeFiles/RPS.dir/src/http/rps_http_module.c.o"
 	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/RPS.dir/src/http/rps_http_module.c.o -MF CMakeFiles/RPS.dir/src/http/rps_http_module.c.o.d -o CMakeFiles/RPS.dir/src/http/rps_http_module.c.o -c /home/jack/RPS/src/http/rps_http_module.c
 
 CMakeFiles/RPS.dir/src/http/rps_http_module.c.i: cmake_force
@@ -324,7 +338,7 @@ CMakeFiles/RPS.dir/src/http/rps_http_module.c.s: cmake_force
 CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o: CMakeFiles/RPS.dir/flags.make
 CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o: /home/jack/RPS/src/http/rps_http_parse.c
 CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o: CMakeFiles/RPS.dir/compiler_depend.ts
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_19) "Building C object CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_20) "Building C object CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o"
 	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o -MF CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o.d -o CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o -c /home/jack/RPS/src/http/rps_http_parse.c
 
 CMakeFiles/RPS.dir/src/http/rps_http_parse.c.i: cmake_force
@@ -334,6 +348,34 @@ CMakeFiles/RPS.dir/src/http/rps_http_parse.c.i: cmake_force
 CMakeFiles/RPS.dir/src/http/rps_http_parse.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/RPS.dir/src/http/rps_http_parse.c.s"
 	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/jack/RPS/src/http/rps_http_parse.c -o CMakeFiles/RPS.dir/src/http/rps_http_parse.c.s
+
+CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o: CMakeFiles/RPS.dir/flags.make
+CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o: /home/jack/RPS/src/http/rps_http_phases.c
+CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o: CMakeFiles/RPS.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_21) "Building C object CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o -MF CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o.d -o CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o -c /home/jack/RPS/src/http/rps_http_phases.c
+
+CMakeFiles/RPS.dir/src/http/rps_http_phases.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/RPS.dir/src/http/rps_http_phases.c.i"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/jack/RPS/src/http/rps_http_phases.c > CMakeFiles/RPS.dir/src/http/rps_http_phases.c.i
+
+CMakeFiles/RPS.dir/src/http/rps_http_phases.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/RPS.dir/src/http/rps_http_phases.c.s"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/jack/RPS/src/http/rps_http_phases.c -o CMakeFiles/RPS.dir/src/http/rps_http_phases.c.s
+
+CMakeFiles/RPS.dir/src/http/rps_http_response.c.o: CMakeFiles/RPS.dir/flags.make
+CMakeFiles/RPS.dir/src/http/rps_http_response.c.o: /home/jack/RPS/src/http/rps_http_response.c
+CMakeFiles/RPS.dir/src/http/rps_http_response.c.o: CMakeFiles/RPS.dir/compiler_depend.ts
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_22) "Building C object CMakeFiles/RPS.dir/src/http/rps_http_response.c.o"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT CMakeFiles/RPS.dir/src/http/rps_http_response.c.o -MF CMakeFiles/RPS.dir/src/http/rps_http_response.c.o.d -o CMakeFiles/RPS.dir/src/http/rps_http_response.c.o -c /home/jack/RPS/src/http/rps_http_response.c
+
+CMakeFiles/RPS.dir/src/http/rps_http_response.c.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/RPS.dir/src/http/rps_http_response.c.i"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/jack/RPS/src/http/rps_http_response.c > CMakeFiles/RPS.dir/src/http/rps_http_response.c.i
+
+CMakeFiles/RPS.dir/src/http/rps_http_response.c.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/RPS.dir/src/http/rps_http_response.c.s"
+	/usr/bin/cc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/jack/RPS/src/http/rps_http_response.c -o CMakeFiles/RPS.dir/src/http/rps_http_response.c.s
 
 # Object files for target RPS
 RPS_OBJECTS = \
@@ -354,8 +396,11 @@ RPS_OBJECTS = \
 "CMakeFiles/RPS.dir/src/event/modules/rps_event_core.c.o" \
 "CMakeFiles/RPS.dir/src/event/rps_event_module.c.o" \
 "CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o" \
+"CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o" \
 "CMakeFiles/RPS.dir/src/http/rps_http_module.c.o" \
-"CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o"
+"CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o" \
+"CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o" \
+"CMakeFiles/RPS.dir/src/http/rps_http_response.c.o"
 
 # External object files for target RPS
 RPS_EXTERNAL_OBJECTS =
@@ -377,11 +422,14 @@ RPS: CMakeFiles/RPS.dir/src/core/rps_string.c.o
 RPS: CMakeFiles/RPS.dir/src/event/modules/rps_event_core.c.o
 RPS: CMakeFiles/RPS.dir/src/event/rps_event_module.c.o
 RPS: CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o
+RPS: CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o
 RPS: CMakeFiles/RPS.dir/src/http/rps_http_module.c.o
 RPS: CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o
+RPS: CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o
+RPS: CMakeFiles/RPS.dir/src/http/rps_http_response.c.o
 RPS: CMakeFiles/RPS.dir/build.make
 RPS: CMakeFiles/RPS.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_20) "Linking C executable RPS"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --bold --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_23) "Linking C executable RPS"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/RPS.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

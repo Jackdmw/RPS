@@ -76,6 +76,10 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c){
 
     request->loc_conf = NULL;
 
+    request->main_conf = NULL;
+    request->srv_conf = NULL;
+    request->uri_changed = 0;
+
     /* 阶段引擎从第一个 phase 的第一个 handler 开始 */
     request->phase = RPS_HTTP_POST_READ_PHASE;
     request->phase_index = 0;

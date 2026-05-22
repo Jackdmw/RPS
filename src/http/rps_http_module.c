@@ -106,7 +106,23 @@ char *rps_set_http_block(rps_conf_t *cf,rps_command_t * cmd,void *conf){
         return "parse error";
     }
 
-    
+    /*
+     * 配置解析完成，调用各 HTTP 模块的 postconfiguration 钩子
+     * 此时模块可注册 phase handler
+     */
+    for (i = 0; modules[i]; i++){
+        if (modules[i]->type == RPS_HTTP_MODULE){
+            ctx = modules[i] -> ctx;
+            if (ctx != NULL && ctx -> postconfiguration != NULL){
+                if (ctx -> postconfiguration(cf) != RPS_OK){
+                    rps_log_error(RPS_LOG_ERR, cycle -> log, 0,
+                                  "postconfiguration of module %s failed",
+                                  modules[i]->name.data);
+                    return "postconfiguration failed";
+                }
+            }
+        }
+    }
 
     *cf = old_cf;
     return RPS_CONF_OK;

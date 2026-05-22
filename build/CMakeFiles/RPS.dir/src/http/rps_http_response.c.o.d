@@ -1,6 +1,6 @@
-CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o: \
- /home/jack/RPS/src/http/modules/rps_http_core_module.c \
- /usr/include/stdc-predef.h /home/jack/RPS/src/http/rps_http_core.h \
+CMakeFiles/RPS.dir/src/http/rps_http_response.c.o: \
+ /home/jack/RPS/src/http/rps_http_response.c /usr/include/stdc-predef.h \
+ /home/jack/RPS/src/http/rps_http_core.h \
  /home/jack/RPS/src/core/rps_config.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
  /usr/include/features.h /usr/include/features-time64.h \
@@ -99,8 +99,5 @@ CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o: \
  /home/jack/RPS/src/event/rps_event.h /home/jack/RPS/src/core/rps_log.h \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
  /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h \
- /home/jack/RPS/src/http/modules/rps_http_core_module.h \
- /home/jack/RPS/src/core/rps_array.h \
- /home/jack/RPS/src/http/rps_http_phases.h \
- /home/jack/RPS/src/core/rps_module.h /home/jack/RPS/src/core/rps_buf.h \
+ /home/jack/RPS/src/core/rps_connection.h \
  /home/jack/RPS/src/core/rps_palloc.h

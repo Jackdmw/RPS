@@ -122,10 +122,13 @@ typedef struct rps_http_request_s {
                                                    * 0: 等待解析起始行
                                                    * 1: 等待解析请求头
                                                    * 2: 解析完毕，进入阶段引擎 */
+    void                  **main_conf;           /* http{} 级配置指针数组            */
+    void                  **srv_conf;            /* server{} 级配置指针数组          */
     void                  **loc_conf;            /* 匹配到的 location 三级配置指针数组 */
     rps_uint_t              phase;               /* 当前阶段（rps_http_phases 枚举值） */
-    rps_uint_t              phase_index;         /* 当前阶段内 handler 的下标 */
+    rps_uint_t              phase_index;         /* 当前 phase_engine handlers[] 的下标 */
     rps_uint_t              internal_redirect;   /* 内部重定向次数（上限 10，防止死循环） */
+    unsigned                uri_changed:1;       /* rewrite 阶段是否修改了 URI       */
 
     /* 生命周期 */
     rps_pool_t             *pool;                /* 请求专属内存池，close_request 时销毁 */
@@ -144,12 +147,11 @@ typedef struct rps_http_request_s {
 // 创建、销毁
 rps_http_request_t *rps_http_create_request(rps_connection_t *c);
 void rps_http_close_request(rps_http_request_t *r);
+void rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc);
 
 // 解析
 rps_int_t rps_http_parse_request_line(rps_http_request_t *r);
 rps_int_t rps_http_parse_headers(rps_http_request_t *r);
-
-
 
 // 发送响应
 rps_int_t rps_http_send_header(rps_http_request_t *r);

@@ -2,6 +2,8 @@
 #include "core/rps_conf_file.h"
 #include "http/modules/rps_http_core_module.h"
 #include "core/rps_module.h"
+#include "core/rps_buf.h"
+#include "core/rps_palloc.h"
 
 char *rps_set_server_block(rps_conf_t *cf,rps_command_t *cmd,void *conf);
 char *rps_set_server_name(rps_conf_t *cf,rps_command_t *cmd,void *conf);
@@ -13,6 +15,9 @@ void *rps_http_core_create_loc_conf(rps_conf_t *cf);
 
 char *rps_http_core_merge_srv_conf(rps_pool_t *pool, void *parent, void *child);
 char *rps_http_core_merge_loc_conf(rps_pool_t *pool, void *parent, void *child);
+
+static rps_int_t rps_http_core_postconfiguration(rps_conf_t *cf);
+static rps_int_t rps_http_core_default_handler(rps_http_request_t *r);
 
 rps_command_t rps_http_core_module_commands[] = {
     
@@ -61,7 +66,7 @@ rps_command_t rps_http_core_module_commands[] = {
 
 static rps_http_module_t rps_http_core_module_ctx = {
     NULL,       /**preconfiguration */
-    NULL,       /**postconfig */
+    rps_http_core_postconfiguration,  /**postconfiguration */
 
     rps_http_core_create_main_conf,
     rps_http_core_create_srv_conf,
@@ -262,7 +267,7 @@ void *rps_http_core_create_main_conf(rps_conf_t * cf){
         return NULL;
     }
     for (i = 0; i < RPS_HTTP_PHASE_NUM; i++){
-        if (rps_array_init(hcmcf -> phases + i, cf -> pool, 1, sizeof(rps_http_handler_pt)) == RPS_ERROR){
+        if (rps_array_init(&hcmcf->phases[i].handlers, cf->pool, 1, sizeof(rps_http_handler_pt)) == RPS_ERROR){
             return NULL;
         }
     }
@@ -342,4 +347,58 @@ char *rps_http_core_merge_loc_conf(rps_pool_t *pool, void *parent, void *child){
         loc_loc -> exact_match = srv_loc -> exact_match;
     }
     return RPS_CONF_OK;
+}
+
+/*
+ * postconfiguration 钩子：
+ * 在所有 HTTP 模块的配置解析完成后被调用。
+ * 1. 各模块注册自己的 phase handler
+ * 2. 初始化阶段引擎（展平 handlers，分配 checker，计算跳转索引）
+ */
+static rps_int_t
+rps_http_core_postconfiguration(rps_conf_t *cf)
+{
+    rps_http_conf_container_t  *container;
+    rps_http_core_main_conf_t  *cmcf;
+
+    container = cf->ctx;
+    cmcf      = container->main_conf[rps_http_core_module.ctx_index];
+
+    /*
+     * 注册默认 content handler 作为兜底
+     * 当 proxy_pass / static 等模块没有匹配时，返回 "Hello from RPS!"
+     */
+    rps_http_register_phase_handler(RPS_HTTP_CONTENT_PHASE,
+                                     rps_http_core_default_handler,
+                                     cmcf);
+
+    /* 初始化阶段引擎 */
+    if (rps_http_init_phase_engine(cmcf) != RPS_OK) {
+        return RPS_ERROR;
+    }
+
+    return RPS_OK;
+}
+
+/*
+ * 默认 content handler：当没有其他 content handler 匹配时，
+ * 返回 "Hello from RPS!\n" 作为兜底响应。
+ */
+static rps_int_t
+rps_http_core_default_handler(rps_http_request_t *r)
+{
+    rps_buf_t *body;
+
+    if (rps_http_send_header(r) != RPS_OK) {
+        return RPS_ERROR;
+    }
+
+    body = rps_buf_create(r->pool, 256);
+    if (body == NULL) {
+        return RPS_ERROR;
+    }
+
+    body->last = rps_cpymem(body->last, "Hello from RPS!\n", 16);
+
+    return rps_http_send_body(r, body);
 }

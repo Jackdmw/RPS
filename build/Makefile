@@ -537,6 +537,30 @@ src/http/modules/rps_http_core_module.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.s
 .PHONY : src/http/modules/rps_http_core_module.c.s
 
+src/http/modules/rps_http_proxy_module.o: src/http/modules/rps_http_proxy_module.c.o
+.PHONY : src/http/modules/rps_http_proxy_module.o
+
+# target to build an object file
+src/http/modules/rps_http_proxy_module.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o
+.PHONY : src/http/modules/rps_http_proxy_module.c.o
+
+src/http/modules/rps_http_proxy_module.i: src/http/modules/rps_http_proxy_module.c.i
+.PHONY : src/http/modules/rps_http_proxy_module.i
+
+# target to preprocess a source file
+src/http/modules/rps_http_proxy_module.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.i
+.PHONY : src/http/modules/rps_http_proxy_module.c.i
+
+src/http/modules/rps_http_proxy_module.s: src/http/modules/rps_http_proxy_module.c.s
+.PHONY : src/http/modules/rps_http_proxy_module.s
+
+# target to generate assembly for a file
+src/http/modules/rps_http_proxy_module.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.s
+.PHONY : src/http/modules/rps_http_proxy_module.c.s
+
 src/http/rps_http_module.o: src/http/rps_http_module.c.o
 .PHONY : src/http/rps_http_module.o
 
@@ -584,6 +608,54 @@ src/http/rps_http_parse.s: src/http/rps_http_parse.c.s
 src/http/rps_http_parse.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_parse.c.s
 .PHONY : src/http/rps_http_parse.c.s
+
+src/http/rps_http_phases.o: src/http/rps_http_phases.c.o
+.PHONY : src/http/rps_http_phases.o
+
+# target to build an object file
+src/http/rps_http_phases.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o
+.PHONY : src/http/rps_http_phases.c.o
+
+src/http/rps_http_phases.i: src/http/rps_http_phases.c.i
+.PHONY : src/http/rps_http_phases.i
+
+# target to preprocess a source file
+src/http/rps_http_phases.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_phases.c.i
+.PHONY : src/http/rps_http_phases.c.i
+
+src/http/rps_http_phases.s: src/http/rps_http_phases.c.s
+.PHONY : src/http/rps_http_phases.s
+
+# target to generate assembly for a file
+src/http/rps_http_phases.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_phases.c.s
+.PHONY : src/http/rps_http_phases.c.s
+
+src/http/rps_http_response.o: src/http/rps_http_response.c.o
+.PHONY : src/http/rps_http_response.o
+
+# target to build an object file
+src/http/rps_http_response.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_response.c.o
+.PHONY : src/http/rps_http_response.c.o
+
+src/http/rps_http_response.i: src/http/rps_http_response.c.i
+.PHONY : src/http/rps_http_response.i
+
+# target to preprocess a source file
+src/http/rps_http_response.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_response.c.i
+.PHONY : src/http/rps_http_response.c.i
+
+src/http/rps_http_response.s: src/http/rps_http_response.c.s
+.PHONY : src/http/rps_http_response.s
+
+# target to generate assembly for a file
+src/http/rps_http_response.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_response.c.s
+.PHONY : src/http/rps_http_response.c.s
 
 # Help Target
 help:
@@ -645,12 +717,21 @@ help:
 	@echo "... src/http/modules/rps_http_core_module.o"
 	@echo "... src/http/modules/rps_http_core_module.i"
 	@echo "... src/http/modules/rps_http_core_module.s"
+	@echo "... src/http/modules/rps_http_proxy_module.o"
+	@echo "... src/http/modules/rps_http_proxy_module.i"
+	@echo "... src/http/modules/rps_http_proxy_module.s"
 	@echo "... src/http/rps_http_module.o"
 	@echo "... src/http/rps_http_module.i"
 	@echo "... src/http/rps_http_module.s"
 	@echo "... src/http/rps_http_parse.o"
 	@echo "... src/http/rps_http_parse.i"
 	@echo "... src/http/rps_http_parse.s"
+	@echo "... src/http/rps_http_phases.o"
+	@echo "... src/http/rps_http_phases.i"
+	@echo "... src/http/rps_http_phases.s"
+	@echo "... src/http/rps_http_response.o"
+	@echo "... src/http/rps_http_response.i"
+	@echo "... src/http/rps_http_response.s"
 .PHONY : help
 
 
