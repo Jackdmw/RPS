@@ -14,6 +14,7 @@
 #define RPS_HTTP_PARSE_ERROR                        0
 #define RPS_HTTP_PARSE_OK                           1
 #define RPS_HTTP_PARSE_EAGIN                        2
+
 rps_http_request_t *rps_http_create_request(rps_connection_t *c){
     rps_http_request_t          *request;
     request = rps_palloc(c -> pool, sizeof(rps_http_request_t));

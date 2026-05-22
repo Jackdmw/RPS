@@ -140,10 +140,6 @@ typedef struct rps_http_request_s {
 
 
 
-
-
-
-
 // 创建、销毁
 rps_http_request_t *rps_http_create_request(rps_connection_t *c);
 void rps_http_close_request(rps_http_request_t *r);

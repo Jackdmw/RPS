@@ -62,7 +62,7 @@ typedef struct {
  * 注册阶段 handler：postconfiguration 阶段由模块调用，
  * 把自己的 handler 函数指针推入对应 phase 的数组中
  */
-#define rps_http_register_phase_handler(phase, handler, cmcf) { \
+#define rps_http_register_phase_handler(phase, handler, cmcf) {  \
     rps_http_handler_pt  *__new;                                 \
     __new = rps_array_push(&(cmcf)->phases[phase].handlers);     \
     if (__new != NULL) *__new = (handler);                       \

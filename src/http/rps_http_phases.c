@@ -4,20 +4,15 @@
 #include "core/rps_module.h"
 #include "core/rps_palloc.h"
 
-/* ================================================================
- *  Phase checker 函数（静态，仅本文件内部使用）
- *
- *  每个 checker 负责：
- *    1. 调用 ph->handler(r) 执行业务逻辑
- *    2. 根据 handler 返回值更新 r->phase_index
- *    3. 返回 RPS_AGAIN 告诉 run_phases "继续循环"
- *    4. 返回 RPS_OK    告诉 run_phases "请求已结束，退出引擎"
- *
+/*
  *  约定：
  *    checker → RPS_AGAIN : 继续循环（phase_index 已更新）
  *    checker → RPS_OK    : 请求挂起或结束，run_phases 返回
- * ================================================================ */
+ */
 
+ /**
+  * 每个阶段只执行一个handler
+  */
 static rps_int_t
 rps_http_core_generic_phase(rps_http_request_t *r,
                             rps_http_phase_handler_t *ph)
@@ -27,13 +22,11 @@ rps_http_core_generic_phase(rps_http_request_t *r,
     rc = ph->handler(r);
 
     if (rc == RPS_OK) {
-        /* handler 处理完毕，跳到下一个 phase 的首个 handler */
         r->phase_index = ph->next;
         return RPS_AGAIN;
     }
 
     if (rc == RPS_DECLINED) {
-        /* handler 不处理当前请求，同 phase 内下一个 */
         r->phase_index++;
         return RPS_AGAIN;
     }
@@ -79,7 +72,7 @@ rps_http_core_rewrite_phase(rps_http_request_t *r,
     return RPS_OK;
 }
 
-/* ── 3. find_config: 匹配虚拟主机和 location ────────────────────── */
+/* find_config: 匹配虚拟主机和 location*/
 static rps_int_t
 rps_http_core_find_config_phase(rps_http_request_t *r,
                                 rps_http_phase_handler_t *ph)
@@ -100,7 +93,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
         return RPS_OK;
     }
 
-    /* ── 1. 匹配虚拟主机（按 Host 头） ── */
+    /*匹配虚拟主机（按 Host 头）*/
     servers = cmcf->servers.elts;
     srv     = NULL;
 
@@ -119,7 +112,10 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
         }
 
         if (host.len == 0) {
-            /* 没有 Host 头，用第一个 server */
+            /* 没有 Host 头，
+             * 用第一个 server，
+             * 一般就只有http1.0版本会有这个问题，1.1强制要求host字段了
+             */
             r->srv_conf = srv_container->srv_conf;
             break;
         }
@@ -137,7 +133,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
         srv           = srv_container->srv_conf[rps_http_core_module.ctx_index];
     }
 
-    /* ── 2. 匹配 location ── */
+    /*匹配 location*/
     if (srv != NULL) {
         locations = srv->locations.elts;
 
@@ -180,7 +176,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
     return RPS_AGAIN;
 }
 
-/* ── 4. post_rewrite: 检查是否需要重新匹配 location ─────────────── */
+/* post_rewrite: 检查是否需要重新匹配 location*/
 static rps_int_t
 rps_http_core_post_rewrite_phase(rps_http_request_t *r,
                                  rps_http_phase_handler_t *ph)
@@ -207,7 +203,7 @@ rps_http_core_post_rewrite_phase(rps_http_request_t *r,
     return RPS_AGAIN;
 }
 
-/* ── 5. access: 访问控制 ──────────────────────────────────────── */
+/* access: 访问控制*/
 static rps_int_t
 rps_http_core_access_phase(rps_http_request_t *r,
                            rps_http_phase_handler_t *ph)
@@ -217,7 +213,6 @@ rps_http_core_access_phase(rps_http_request_t *r,
     rc = ph->handler(r);
 
     if (rc == RPS_DECLINED) {
-        /* 此 handler 不参与鉴权，试下一个 */
         r->phase_index++;
         return RPS_AGAIN;
     }
@@ -239,8 +234,19 @@ rps_http_core_access_phase(rps_http_request_t *r,
     r->phase_index = ph->next;
     return RPS_AGAIN;
 }
+static rps_int_t
+rps_http_core_log_phase(rps_http_request_t *r,rps_http_phase_handler_t  *ph){
+    rps_int_t   rc;
+    rc = ph -> handler(r);
 
-/* ── 6. post_access: 汇总鉴权结果 ─────────────────────────────── */
+    if (rc == RPS_OK || rc == RPS_AGAIN){
+        r -> phase_index ++;
+        return RPS_OK;
+    }
+    return  RPS_OK; 
+}
+
+/* post_access: 汇总鉴权结果*/
 static rps_int_t
 rps_http_core_post_access_phase(rps_http_request_t *r,
                                 rps_http_phase_handler_t *ph)
@@ -253,7 +259,7 @@ rps_http_core_post_access_phase(rps_http_request_t *r,
     return RPS_AGAIN;
 }
 
-/* ── 7. content: 生成响应内容（只执行一个 handler） ───────────── */
+/*content: 生成响应内容（只执行一个 handler*/
 static rps_int_t
 rps_http_core_content_phase(rps_http_request_t *r,
                             rps_http_phase_handler_t *ph)
@@ -281,14 +287,12 @@ rps_http_core_content_phase(rps_http_request_t *r,
     return RPS_OK;
 }
 
-/* ================================================================
+/*
  *  阶段引擎初始化
- *
  *  把配置解析阶段各模块注册在 phases[] 里的 handler 展平成
  *  一维数组 phase_engine.handlers[]，并为每个 handler 分配
  *  对应的 checker 和 next 跳转索引。
- * ================================================================ */
-
+ */
 rps_int_t
 rps_http_init_phase_engine(rps_http_core_main_conf_t *cmcf)
 {
@@ -394,17 +398,14 @@ rps_http_init_phase_engine(rps_http_core_main_conf_t *cmcf)
     return RPS_OK;
 }
 
-/* ================================================================
+/* 
  *  阶段引擎运行入口
- *
  *  请求解析完头部后调用。遍历展平后的 handler 数组，
  *  每个 handler 由 checker 控制执行和跳转。
- *
  *  返回值:
  *    RPS_OK  — 请求处理完毕（正常结束或挂起等待 IO）
  *    RPS_... — 实际最终状态由 finalize 体现
- * ================================================================ */
-
+ */
 rps_int_t
 rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
 {
@@ -422,22 +423,13 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
         rc = ph[r->phase_index].checker(r, &ph[r->phase_index]);
 
         if (rc == RPS_OK) {
-            /*
-             * checker 返回 OK 表示请求已 finalize（正常结束或挂起），
-             * 直接退出引擎
-             */
             return RPS_OK;
         }
-
         /*
          * checker 返回 RPS_AGAIN（或其他非 OK）：
          *   表示 phase_index 已更新，继续下一轮循环
          */
     }
-
-    /*
-     * 正常遍历完所有 handler（到达哨兵），请求结束
-     */
     rps_http_finalize_request(r, RPS_OK);
     return RPS_OK;
 }

@@ -106,7 +106,6 @@ rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out)
 
 /*
  * 最终回收请求
- *
  * 当前阶段: 标记连接关闭，调用 close_request
  * TODO: 完善 keepalive 逻辑（重置请求状态，重新进入解析循环）
  */
