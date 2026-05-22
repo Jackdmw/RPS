@@ -98,4 +98,5 @@ CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o: \
  /home/jack/RPS/src/core/rps_connection.h \
  /home/jack/RPS/src/event/rps_event.h /home/jack/RPS/src/core/rps_log.h \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
- /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h
+ /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h \
+ /home/jack/RPS/src/core/rps_connection.h
