@@ -12,6 +12,7 @@ rps_module_t *rps_modules[] = {
     &rps_event_module,
     &rps_http_module,
     &rps_http_core_module,
+    &rps_http_proxy_module,
     NULL
 };
 rps_uint_t      rps_max_module;

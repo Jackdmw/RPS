@@ -18,6 +18,7 @@ char *rps_http_core_merge_loc_conf(rps_pool_t *pool, void *parent, void *child);
 
 static rps_int_t rps_http_core_postconfiguration(rps_conf_t *cf);
 static rps_int_t rps_http_core_default_handler(rps_http_request_t *r);
+static rps_int_t rps_http_core_find_config_handler(rps_http_request_t *r);
 
 rps_command_t rps_http_core_module_commands[] = {
     
@@ -365,6 +366,17 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
     cmcf      = container->main_conf[rps_http_core_module.ctx_index];
 
     /*
+     * FIND_CONFIG phase 必须有一个占位 handler，
+     * 否则 init_phase_engine 展平时不会生成该项，
+     * checker（rps_http_core_find_config_phase）永远不被调用，
+     * srv_conf / loc_conf 始终为 NULL。
+     * checker 本身不调用 handler，所以这里注册一个空函数即可。
+     */
+    rps_http_register_phase_handler(RPS_HTTP_FIND_CONFIG_PHASE,
+                                     rps_http_core_find_config_handler,
+                                     cmcf);
+
+    /*
      * 注册默认 content handler 作为兜底
      * 当 proxy_pass / static 等模块没有匹配时，返回 "Hello from RPS!"
      */
@@ -401,4 +413,16 @@ rps_http_core_default_handler(rps_http_request_t *r)
     body->last = rps_cpymem(body->last, "Hello from RPS!\n", 16);
 
     return rps_http_send_body(r, body);
+}
+
+/*
+ * FIND_CONFIG phase 占位 handler。
+ * 实际工作由 checker（rps_http_core_find_config_phase）完成
+ * （虚拟主机匹配 + location 匹配），checker 不调用 handler，
+ * 所以这里只是一个空函数体，仅为确保展平数组中有该 phase 的项。
+ */
+static rps_int_t
+rps_http_core_find_config_handler(rps_http_request_t *r)
+{
+    return RPS_OK;
 }

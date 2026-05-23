@@ -315,7 +315,7 @@ rps_http_init_phase_engine(rps_http_core_main_conf_t *cmcf)
         rps_http_core_post_access_phase,   /* POST_ACCESS      */
         rps_http_core_generic_phase,       /* PRECONTENT       */
         rps_http_core_content_phase,       /* CONTENT          */
-        rps_http_core_generic_phase,       /* LOG              */
+        rps_http_core_log_phase,           /* LOG              */
     };
 
     total = 0;

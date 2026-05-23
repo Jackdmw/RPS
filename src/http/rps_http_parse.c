@@ -96,7 +96,16 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c){
     return request;
 }
 void rps_http_close_request(rps_http_request_t *r){
-    
+    if (r->upstream) {
+        rps_close_connection(r->upstream);
+        r->upstream = NULL;
+    }
+    if (r->connection && r->connection->data == r) {
+        r->connection->data = NULL;
+    }
+    if (r->pool) {
+        rps_destroy_pool(r->pool);
+    }
 }
 
 /**
@@ -151,7 +160,7 @@ rps_int_t rps_http_parse_request_line(rps_http_request_t *r){
             }
             else if (status == 2){
                 for (i = 0; i < arg.len; i++){
-                    if (arg.data[i] == '\?'){
+                    if (arg.data[i] == '?'){
                         r -> args.data = arg.data + i + 1;
                         r -> args.len = arg.len - i - 1;
                         break;
@@ -161,7 +170,9 @@ rps_int_t rps_http_parse_request_line(rps_http_request_t *r){
                 r -> uri.len = i;
             }
             else if (status == 3){
-                if (rps_strcmp_with_cstr(arg, "HTTP/1.0")|| rps_strcmp_with_cstr(arg, "HTTP/2.0")){
+                if (rps_strcmp_with_cstr(arg, "HTTP/1.0") == RPS_STRING_EQUAL
+                    || rps_strcmp_with_cstr(arg, "HTTP/1.1") == RPS_STRING_EQUAL
+                    || rps_strcmp_with_cstr(arg, "HTTP/2.0") == RPS_STRING_EQUAL) {
                     r -> http_version = arg;
                 }
             }
@@ -172,6 +183,7 @@ rps_int_t rps_http_parse_request_line(rps_http_request_t *r){
         }
     }
     body -> pos = pos + 2;
+    r->parse_status = 1;
     return RPS_HTTP_PARSE_OK;
 }
 
@@ -197,7 +209,9 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
     for (one_header = pos; pos < buf -> last; pos ++){
         if (pos[0] == '\r' && pos[1] == '\n'){
             if (one_header == pos){
-                return RPS_HTTP_PARSE_OK;    
+                buf->pos = pos + 2;
+                r->parse_status = 2;
+                return RPS_HTTP_PARSE_OK;
             }
 
             status = 0;

@@ -63,10 +63,5 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log,rps_list
 void rps_close_connection(rps_connection_t *c);
 void rps_free_connection(rps_connection_t *c,rps_cycle_t *cycle);
 
-/* 3. 数据传输 */
-ssize_t rps_unix_recv(rps_connection_t *c, u_char *buf, size_t size);
-ssize_t rps_unix_send(rps_connection_t *c, u_char *buf, size_t size);
-
-/* 4. 辅助工具 */
 rps_int_t rps_set_nonblocking(rps_fd_t s); 
 #endif
