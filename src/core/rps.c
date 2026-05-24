@@ -9,6 +9,8 @@
 #include "http/modules/rps_http_core_module.h"
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <pthread.h>
 
 typedef struct
@@ -102,7 +104,7 @@ int main(int argc,char **argv){
     rps_event_conf_t * e = container->event_conf[0];
     printf("\nuse is %s\nworker_connections is %lu \n",e->use.data,e->worker_connections);
 
-    //rps_master_process_cycle(cycle);
+    rps_master_process_cycle(cycle);
 }
 static  int rps_daemon(){
     pid_t pid;
@@ -200,6 +202,11 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
         if(rps_daemon() == -1)
         return;
     }
+
+    /* 初始化所有模块（属于 master 阶段的工作） */
+    if (rps_init_modules(cycle) != RPS_OK) {
+        return;
+    }
     /**
      * todo: pid 文件相关操作需要完善
      */
@@ -266,6 +273,19 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     rps_worker_process_init(cycle);
 
     /*
+     * 注册 worker 进程信号处理
+     */
+    struct sigaction  sa;
+
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = sig_handler;
+    sa.sa_flags = 0;
+
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);
+
+    /*
      * 线程阻塞模式（if_pthread == 1）：简单 accept + 每连接一线程，
      * 保留原有逻辑。
      */
@@ -299,6 +319,13 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     if (engine == NULL) {
         rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
                       "no event engine configured");
+        return;
+    }
+
+    /* 打开所有监听 socket */
+    if (rps_open_listening_sockets(cycle) != RPS_OK) {
+        rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
+                      "failed to open listening sockets");
         return;
     }
 
@@ -425,11 +452,10 @@ rps_http_wait_request_handler(rps_event_t *ev)
     n = rps_unix_recv(c, b->last, (size_t)(b->end - b->last));
     if (n <= 0) {
         if (n == 0 || (errno != EAGAIN && errno != EINTR)) {
-            /* 对端关闭或出错 */
             rps_http_finalize_request(r, RPS_ERROR);
-            return;
+            goto done;
         }
-        return; /* EAGAIN — 等下次读事件 */
+        return;
     }
     b->last += n;
 
@@ -438,13 +464,12 @@ rps_http_wait_request_handler(rps_event_t *ev)
         if (r->parse_status == 0) {
             rc = rps_http_parse_request_line(r);
             if (rc == RPS_HTTP_PARSE_EAGIN) {
-                return; /* 数据不够，等下次读 */
+                return;
             }
             if (rc == RPS_HTTP_PARSE_ERROR) {
                 rps_http_finalize_request(r, RPS_ERROR);
-                return;
+                goto done;
             }
-            /* OK → parse_status 已置 1，继续解析 header */
         }
 
         if (r->parse_status == 1) {
@@ -454,16 +479,22 @@ rps_http_wait_request_handler(rps_event_t *ev)
             }
             if (rc == RPS_HTTP_PARSE_ERROR) {
                 rps_http_finalize_request(r, RPS_ERROR);
-                return;
+                goto done;
             }
-            /* OK → parse_status 已置 2，进入阶段引擎 */
         }
 
         if (r->parse_status == 2) {
-            /*
-             * 阶段引擎需要 main_conf。
-             * 从第一个 server 的 main_conf 获取（FIND_CONFIG phase 会匹配具体 server）。
-             */
+            /* 如果请求有 body（Content-Length > 0），检查是否读完 */
+            if (r->headers_in.content_length_n > 0) {
+                size_t hdr_end = (size_t)(b->pos - b->start);
+                size_t total   = hdr_end + r->headers_in.content_length_n;
+                size_t have    = (size_t)(b->last - b->start);
+
+                if (have < total) {
+                    return;
+                }
+            }
+
             if (r->main_conf == NULL) {
                 container = rps_cycle->conf_ctx[rps_http_module.index];
                 if (container != NULL) {
@@ -473,13 +504,39 @@ rps_http_wait_request_handler(rps_event_t *ev)
             cmcf = r->main_conf ? r->main_conf[rps_http_core_module.ctx_index] : NULL;
             if (cmcf == NULL) {
                 rps_http_finalize_request(r, RPS_ERROR);
-                return;
+                goto done;
             }
 
+            /* TODO: 这里，rc 可能会有eagain的情况，现在未知 */
             rc = rps_http_run_phases(r, cmcf);
-            (void)rc;
-            return;
+            rps_http_finalize_request(r, rc);
+            goto done;
         }
+    }
+
+done:
+    if (c && !c->close && c->data) {
+        r = c->data;
+        if (r->keepalive) {
+            /* 销毁旧 request 及 pool，重建干净的 request */
+            rps_http_close_request(r);
+            c->pool = rps_create_pool(1024);
+            if (c->pool == NULL) {
+                rps_close_connection(c);
+                rps_free_connection(c, rps_cycle);
+                return;
+            }
+            r = rps_http_create_request(c);
+            if (r == NULL) {
+                rps_close_connection(c);
+                rps_free_connection(c, rps_cycle);
+                return;
+            }
+            c->data = r;
+        }
+        c->read->handler = rps_http_wait_request_handler;
+        c->read->data    = c;
+        rps_cycle->event_engine->add_event(c->read, RPS_READ_EVENT);
     }
 }
 

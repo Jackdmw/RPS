@@ -1,4 +1,5 @@
 #include "http/rps_http_core.h"
+#include "http/rps_http_phases.h"
 #include "core/rps_connection.h"
 #include "core/rps_palloc.h"
 #include <sys/socket.h>
@@ -106,17 +107,26 @@ rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out)
 
 /*
  * 最终回收请求
- * 当前阶段: 标记连接关闭，调用 close_request
- * TODO: 完善 keepalive 逻辑（重置请求状态，重新进入解析循环）
+ * 标记连接关闭并销毁请求。
  */
 void
 rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc)
 {
+    rps_connection_t  *c;
+
+    c = r->connection;
+
     if (rc != RPS_OK) {
-        r->connection->close = 1;
-    } else if (!r->keepalive) {
-        r->connection->close = 1;
+        r->keepalive = 0;
     }
 
+    if (r->keepalive && c && rc == RPS_OK) {
+        /* keepalive: 不做清理，由调用者在事件循环中重建 request */
+        return;
+    }
+
+    if (c) {
+        c->close = 1;
+    }
     rps_http_close_request(r);
 }

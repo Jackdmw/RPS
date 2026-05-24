@@ -109,6 +109,7 @@ char *rps_set_http_block(rps_conf_t *cf,rps_command_t * cmd,void *conf){
     /*
      * 配置解析完成，调用各 HTTP 模块的 postconfiguration 钩子
      * 此时模块可注册 phase handler
+     * core 模块的钩子还同时执行了配置合并， 后面不用加了
      */
     for (i = 0; modules[i]; i++){
         if (modules[i]->type == RPS_HTTP_MODULE){

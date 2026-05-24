@@ -226,7 +226,7 @@ char *rps_set_location_block(rps_conf_t *cf,rps_command_t *cmd,void *conf){
      * 继承srv，main级别配置
      */
     new_loc -> main_conf = srv_container -> main_conf;
-    new_loc -> srv_conf = srv_container -> loc_conf;
+    new_loc -> srv_conf = srv_container -> srv_conf;
     
     /**
      * 初始化，loc级别配置
@@ -463,6 +463,52 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
                       "register listening: %s", addr_text);
     }
     
+    /*
+     * 配置合并：main → server → location
+     * 遍历所有 HTTP 模块，调用其 merge_srv_conf / merge_loc_conf 钩子
+     */
+    for (i = 0; i < cmcf->servers.nelts; i++) {
+        rps_http_conf_container_t **srv_containers = cmcf->servers.elts;
+        rps_http_conf_container_t  *srv_container  = srv_containers[i];
+        rps_http_core_srv_conf_t   *srv_conf;
+        rps_uint_t                  m;
+
+        if (srv_container == NULL) continue;
+
+        /* merge main → server */
+        for (m = 0; cycle->modules[m]; m++) {
+            rps_http_module_t *http_ctx;
+            if (cycle->modules[m]->type != RPS_HTTP_MODULE) continue;
+            http_ctx = cycle->modules[m]->ctx;
+            if (http_ctx && http_ctx->merge_srv_conf) {
+                http_ctx->merge_srv_conf(cycle->pool,
+                    container, srv_container);
+            }
+        }
+
+        /* merge server → location */
+        srv_conf = srv_container->srv_conf[rps_http_core_module.ctx_index];
+        if (srv_conf == NULL) continue;
+
+        {
+            rps_http_conf_container_t **loc_containers = srv_conf->locations.elts;
+            rps_uint_t                  j;
+            for (j = 0; j < srv_conf->locations.nelts; j++) {
+                rps_http_conf_container_t *loc_container = loc_containers[j];
+                if (loc_container == NULL) continue;
+                for (m = 0; cycle->modules[m]; m++) {
+                    rps_http_module_t *http_ctx;
+                    if (cycle->modules[m]->type != RPS_HTTP_MODULE) continue;
+                    http_ctx = cycle->modules[m]->ctx;
+                    if (http_ctx && http_ctx->merge_loc_conf) {
+                        http_ctx->merge_loc_conf(cycle->pool,
+                            srv_container, loc_container);
+                    }
+                }
+            }
+        }
+    }
+
     /* 初始化阶段引擎 */
     if (rps_http_init_phase_engine(cmcf) != RPS_OK) {
         return RPS_ERROR;

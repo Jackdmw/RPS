@@ -71,8 +71,8 @@ char * rps_set_use(rps_conf_t *cf,rps_command_t *cmd,void* conf){
     else if (rps_strcmp_with_cstr(values[1],"io_uring")){
         ccf -> use = (rps_str_t)rps_string("io_uring");
     }
-    else if ( rps_strcmp_with_cstr(values[1],"thread_block")){
-        ccf -> use = (rps_str_t)rps_string("thread_block");
+    else if ( rps_strcmp_with_cstr(values[1],"threads")){
+        ccf -> use = (rps_str_t)rps_string("threads");
         cf -> cycle -> if_pthread = 1;
     }
     else {
@@ -116,7 +116,7 @@ rps_int_t  rps_event_core_init_process(rps_cycle_t *cycle){
         cycle -> connections[i].read = cycle -> reads + i;
         cycle -> connections[i].write = cycle -> writes + i;
         cycle -> connections[i].sockaddr = rps_pcalloc(cycle -> pool, sizeof(struct sockaddr));
-        if(cycle -> connections[i].sockaddr = NULL){
+        if(cycle -> connections[i].sockaddr == NULL){
             return RPS_ERROR;
         }
     }

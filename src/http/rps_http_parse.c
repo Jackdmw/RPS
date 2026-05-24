@@ -40,11 +40,11 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c){
     rps_memzero(&request->headers_out, sizeof(rps_http_headers_out_t));
     
     request -> headers_in.connection.key = (rps_str_t)rps_string("connection");
-    request -> headers_in.content_length.key = (rps_str_t)rps_string("content_length");
-    request -> headers_in.user_agent.key = (rps_str_t)rps_string("user_agent");
-    request -> headers_in.content_type.key = (rps_str_t)rps_string("content_type");
+    request -> headers_in.content_length.key = (rps_str_t)rps_string("content-length");
+    request -> headers_in.user_agent.key = (rps_str_t)rps_string("user-agent");
+    request -> headers_in.content_type.key = (rps_str_t)rps_string("content-type");
 
-    request -> headers_out.content_type.key = (rps_str_t)rps_string("conntent_type");
+    request -> headers_out.content_type.key = (rps_str_t)rps_string("content-type");
     request -> headers_out.server.key = (rps_str_t)rps_string("server");
     request -> headers_out.status.key = (rps_str_t)rps_string("status");
 
@@ -211,6 +211,27 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
             if (one_header == pos){
                 buf->pos = pos + 2;
                 r->parse_status = 2;
+
+                /* keepalive 判断 */
+                if (rps_strcmp_with_cstr(r->http_version, "HTTP/1.0")) {
+                    r->keepalive = 0;
+                    if (r->headers_in.connection.value.data != NULL
+                        && rps_strcmp_with_cstr(r->headers_in.connection.value,
+                                                "keep-alive"))
+                    {
+                        r->keepalive = 1;
+                    }
+                } else {
+                    /* HTTP/1.1 默认 keepalive，Connection: close 时关闭 */
+                    r->keepalive = 1;
+                    if (r->headers_in.connection.value.data != NULL
+                        && rps_strcmp_with_cstr(r->headers_in.connection.value,
+                                                "close"))
+                    {
+                        r->keepalive = 0;
+                    }
+                }
+
                 return RPS_HTTP_PARSE_OK;
             }
 
@@ -237,16 +258,16 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
             if (rps_strcmp_with_cstr(key, "host") == RPS_STRING_EQUAL){
                 r -> headers_in.host.value = value;
             }
-            else if (rps_strcmp_with_cstr(key, "user_agent") == RPS_STRING_EQUAL){
+            else if (rps_strcmp_with_cstr(key, "user-agent") == RPS_STRING_EQUAL){
                 r -> headers_in.user_agent.value = value;
             }
-            else if (rps_strcmp_with_cstr(key, "content_type") == RPS_STRING_EQUAL){
+            else if (rps_strcmp_with_cstr(key, "content-type") == RPS_STRING_EQUAL){
                 r -> headers_in.content_type.value = value;
             }
-            else if (rps_strcmp_with_cstr(key, "content_length") == RPS_STRING_EQUAL){
+            else if (rps_strcmp_with_cstr(key, "content-length") == RPS_STRING_EQUAL){
                 r -> headers_in.content_length.value = value;
                 r -> headers_in.content_length_n = rps_atoi(value.data,value.len);
-                
+
                 if (r->headers_in.content_length_n == RPS_ERROR){
                     return RPS_HTTP_PARSE_ERROR;
                 }

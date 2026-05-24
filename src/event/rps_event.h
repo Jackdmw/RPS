@@ -21,8 +21,8 @@ typedef struct{
 }rps_event_container_t;
 
 /* 事件操作标志 */
-#define RPS_READ_EVENT    0
-#define RPS_WRITE_EVENT   1
+#define RPS_READ_EVENT    0x00000001
+#define RPS_WRITE_EVENT   0x00000002
 
 typedef struct rps_event_module_s {
 
@@ -51,6 +51,8 @@ struct rps_event_s{
     unsigned                    timer_set:1;    /* 是否加入红黑树计时器*/
 
     rps_rbtree_node_t           timer;          /* 红黑树*/
+
+    unsigned                    epoll_events;   /* 当前 epoll 注册的事件标志（EPOLLIN/EPOLLOUT） */
 
     rps_log_t                   *log;
 

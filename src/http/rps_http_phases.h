@@ -19,17 +19,17 @@ typedef struct rps_http_core_main_conf_s rps_http_core_main_conf_t;
 /* 阶段定义 */
 #define RPS_HTTP_PHASE_NUM  11
 typedef enum {
-    RPS_HTTP_POST_READ_PHASE = 0,
-    RPS_HTTP_SERVER_REWRITE_PHASE,
-    RPS_HTTP_FIND_CONFIG_PHASE,
-    RPS_HTTP_REWRITE_PHASE,
-    RPS_HTTP_POST_REWRITE_PHASE,
-    RPS_HTTP_PREACCESS_PHASE,
-    RPS_HTTP_ACCESS_PHASE,
-    RPS_HTTP_POST_ACCESS_PHASE,
-    RPS_HTTP_PRECONTENT_PHASE,
-    RPS_HTTP_CONTENT_PHASE,
-    RPS_HTTP_LOG_PHASE,
+    RPS_HTTP_POST_READ_PHASE = 0,           /* 请求头读取完毕阶段*/
+    RPS_HTTP_SERVER_REWRITE_PHASE,          /* Server 级别重写 URI*/
+    RPS_HTTP_FIND_CONFIG_PHASE,             /* 路由匹配*/
+    RPS_HTTP_REWRITE_PHASE,                 /* Location 级别重写 URI*/
+    RPS_HTTP_POST_REWRITE_PHASE,            /* 重写后处理阶段*/
+    RPS_HTTP_PREACCESS_PHASE,               /* 访问预控阶段*/
+    RPS_HTTP_ACCESS_PHASE,                  /* 访问权限阶段*/
+    RPS_HTTP_POST_ACCESS_PHASE,             /* 访问权限后置阶段*/
+    RPS_HTTP_PRECONTENT_PHASE,              /* 内容预处理阶段*/
+    RPS_HTTP_CONTENT_PHASE,                 /* 内容产生阶段*/
+    RPS_HTTP_LOG_PHASE,                     /* 日志记录阶段*/
 } rps_http_phases;
 
 typedef rps_int_t (*rps_http_handler_pt)(rps_http_request_t *r);

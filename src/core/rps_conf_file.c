@@ -265,7 +265,7 @@ rps_conf_handler(rps_conf_t* cf,rps_int_t st)
 
                 //块指令校验
                 if(st == RPS_CONF_BLOCK_START ){
-                    if(cmd->type & RPS_CONF_BLOCK == 0){
+                    if((cmd->type & RPS_CONF_BLOCK) == 0){
                         rps_log_error(RPS_ERROR,cf->log,0,"command \"%s\" should not be a block command!,FILE:%s,LINE:%lu",cmd->name.data,cf->file_name.data,cf->conf_file->line);
                     }
                     else {
@@ -355,7 +355,7 @@ rps_conf_handler(rps_conf_t* cf,rps_int_t st)
                     /**
                      * 块指令
                      */
-                    if (cmd -> type & RPS_CONF_BLOCK != 0){
+                    if ((cmd -> type & RPS_CONF_BLOCK) != 0){
                         // 块指令(server)一定是定义在http核心模块的main部分，核心模块的结构体中应当包含一个实例数组（动态）
                         rps_http_conf_container_t * cctx;
                         cctx = (rps_http_conf_container_t*)cf->ctx;
@@ -375,7 +375,7 @@ rps_conf_handler(rps_conf_t* cf,rps_int_t st)
                     /**
                      * 块指令
                      */
-                    if (cmd -> type  & RPS_CONF_BLOCK !=0){
+                    if ((cmd -> type  & RPS_CONF_BLOCK) !=0){
                         rps_http_conf_container_t * cctx;
                         cctx = (rps_http_conf_container_t*)cf->ctx;
                         ctx = cctx->srv_conf[cycle->modules[i]->ctx_index];

@@ -452,7 +452,7 @@ rps_http_proxy_send_request(rps_http_request_t *r,
     rps_http_header_kv_t       *hdr;
     ssize_t                     n;
 
-    p   = buf;
+    p = buf;
 
     /* --- 请求行 --- */
     /* method */
@@ -495,6 +495,28 @@ rps_http_proxy_send_request(rps_http_request_t *r,
         *p++ = '\r'; *p++ = '\n';
     }
 
+    /* --- 转发客户端固定 header（不与其他 header 重复即可） --- */
+    if (plcf->pass_request_headers) {
+        if (r->headers_in.user_agent.value.data != NULL) {
+            p = rps_cpymem(p, "User-Agent: ", 12);
+            p = rps_cpymem(p, r->headers_in.user_agent.value.data,
+                           r->headers_in.user_agent.value.len);
+            *p++ = '\r'; *p++ = '\n';
+        }
+        if (r->headers_in.content_type.value.data != NULL) {
+            p = rps_cpymem(p, "Content-Type: ", 14);
+            p = rps_cpymem(p, r->headers_in.content_type.value.data,
+                           r->headers_in.content_type.value.len);
+            *p++ = '\r'; *p++ = '\n';
+        }
+        if (r->headers_in.content_length.value.data != NULL) {
+            p = rps_cpymem(p, "Content-Length: ", 16);
+            p = rps_cpymem(p, r->headers_in.content_length.value.data,
+                           r->headers_in.content_length.value.len);
+            *p++ = '\r'; *p++ = '\n';
+        }
+    }
+
     /* --- 转发客户端通用 header（rps_list_t 分块迭代） --- */
     if (plcf->pass_request_headers) {
         rps_list_part_t *part;
@@ -522,59 +544,77 @@ rps_http_proxy_send_request(rps_http_request_t *r,
         return RPS_ERROR;
     }
 
-    /* TODO: 处理部分写入（EAGAIN），非阻塞模式下需要注册写事件重试 */
-    /* TODO: 转发请求体（proxy_pass_request_body） */
+    /* --- 转发请求体 --- */
+    if (plcf->pass_request_body && r->headers_in.content_length_n > 0) {
+        rps_buf_t *body_buf = r->request_body;
+        size_t body_len = (size_t)(body_buf->last - body_buf->pos);
+
+        if (body_len > 0) {
+            n = send(upstream_fd, body_buf->pos, body_len, 0);
+            if (n < 0) {
+                return RPS_ERROR;
+            }
+        }
+    }
 
     return RPS_OK;
 }
 
 /*
- * 从后端读取响应，发送给客户端（阻塞模式）
+ * 从后端读取响应，发送给客户端（阻塞模式，epoll 完成后改为非阻塞）
  *
- * 响应格式:
- *   HTTP/1.1 200 OK\r\n
- *   Content-Type: text/html\r\n
- *   \r\n
- *   <body>
+ * 循环 recv 直到读取到完整的 header + body，
+ * 然后转发给客户端。
  */
 static rps_int_t
 rps_http_proxy_read_response(rps_http_request_t *r, int upstream_fd)
 {
-    u_char      buf[8192];
+    u_char      buf[16384];
     u_char     *p, *end, *body_start;
-    ssize_t     n;
+    ssize_t     n, total;
 
-    n = recv(upstream_fd, buf, sizeof(buf) - 1, 0);
-    if (n <= 0) {
-        return RPS_ERROR;
-    }
-    buf[n] = '\0';
+    /* 循环读取直到获得完整数据或对端关闭 */
+    total = 0;
+    for (;;) {
+        n = recv(upstream_fd, buf + total,
+                 sizeof(buf) - 1 - (size_t)total, 0);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EINTR) {
+                continue;
+            }
+            return RPS_ERROR;
+        }
+        if (n == 0) {
+            break; /* 对端关闭 */
+        }
+        total += n;
+        buf[total] = '\0';
 
-    /* 解析响应：找 \r\n\r\n 分隔 header 和 body */
-    p   = buf;
-    end = buf + n;
+        /* 检查是否已收到完整 header */
+        body_start = NULL;
+        for (p = buf; p + 3 < buf + total; p++) {
+            if (p[0] == '\r' && p[1] == '\n'
+                && p[2] == '\r' && p[3] == '\n') {
+                body_start = p + 4;
+                break;
+            }
+        }
+        if (body_start != NULL) {
+            break; /* header 收完 */
+        }
 
-    body_start = NULL;
-    for (; p + 3 < end; p++) {
-        if (p[0] == '\r' && p[1] == '\n' && p[2] == '\r' && p[3] == '\n') {
-            body_start = p + 4;
-            break;
+        if ((size_t)total >= sizeof(buf) - 1) {
+            return RPS_ERROR; /* buffer 溢出 */
         }
     }
 
+    end = buf + total;
+
     if (body_start == NULL) {
-        /* 数据不完整 */
         return RPS_ERROR;
     }
 
-    /*
-     * 目前简化处理：直接把后端原始响应写入客户端 socket，
-     * 不走 send_header / send_body 的 buffer 体系。
-     * 后续完善时改为：解析后端状态行 → 填入 headers_out → send_header → send_body。
-     */
-    (void)rps_http_output_filter;
-
-    /* 直接发送后端响应给客户端 */
+    /* 发送响应头 */
     n = send(r->connection->fd, buf, (size_t)(body_start - buf), 0);
     if (n < 0) {
         return RPS_ERROR;
@@ -583,18 +623,13 @@ rps_http_proxy_read_response(rps_http_request_t *r, int upstream_fd)
     /* 发送响应体 */
     {
         size_t body_len = (size_t)(end - body_start);
-        n = send(r->connection->fd, body_start, body_len, 0);
-        if (n < 0) {
-            return RPS_ERROR;
+        if (body_len > 0) {
+            n = send(r->connection->fd, body_start, body_len, 0);
+            if (n < 0) {
+                return RPS_ERROR;
+            }
         }
     }
-
-    /* TODO:
-     * 1. 解析后端状态行，将状态码填入 r->headers_out.status
-     * 2. 解析后端响应头，填入 r->headers_out
-     * 3. 处理分块读取（recv 循环直到读完）
-     * 4. 非阻塞模式下处理 EAGAIN
-     */
 
     return RPS_OK;
 }

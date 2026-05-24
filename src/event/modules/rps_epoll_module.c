@@ -114,19 +114,18 @@ rps_epoll_add_event(rps_event_t *ev, rps_uint_t event)
     rps_connection_t       *c;
 
     c = ev->data;
+    ee.events = EPOLLEXCLUSIVE;
 
     memset(&ee, 0, sizeof(ee));
 
-    if (event == RPS_READ_EVENT) {
-        ee.events = EPOLLIN;
-    } else {
-        ee.events = EPOLLOUT;
+    if (event & RPS_READ_EVENT) {
+        ee.events |= EPOLLIN;
+    } 
+    if (event & RPS_WRITE_EVENT) {
+        ee.events |= EPOLLOUT;
     }
     ee.data.ptr = ev;
 
-    /**
-     * 做了一手封装，自动处理读写事件的监听转换
-     */
     if (ev->active) {
         op = EPOLL_CTL_MOD;
     } else {
@@ -137,6 +136,8 @@ rps_epoll_add_event(rps_event_t *ev, rps_uint_t event)
     if (epoll_ctl(epoll_fd, op, c->fd, &ee) == -1) {
         return RPS_ERROR;
     }
+
+    ev->epoll_events = ee.events;
 
     return RPS_OK;
 }
@@ -153,6 +154,7 @@ rps_epoll_del_event(rps_event_t *ev, rps_uint_t event)
     }
 
     ev->active = 0;
+    ev->epoll_events = 0;
 
     if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->fd, NULL) == -1) {
         return RPS_ERROR;
