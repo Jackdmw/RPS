@@ -3,6 +3,10 @@
 #include "rps_core.h"
 #include "rps_core_module.h"
 #include "event/rps_event.h"
+#include "http/rps_http_core.h"
+#include "http/rps_http_phases.h"
+#include "http/rps_http_parse.h"
+#include "http/modules/rps_http_core_module.h"
 #include <signal.h>
 #include <sys/wait.h>
 #include <pthread.h>
@@ -19,6 +23,13 @@ static int rps_daemon();
 static void rps_master_process_cycle(rps_cycle_t *cycle);
 static void rps_worker_process_init(rps_cycle_t * cycle);
 static void rps_worker_process_cycle(rps_cycle_t *cylce);
+
+/* 事件驱动相关 */
+static rps_cycle_t    *rps_cycle;     /* worker 进程当前 cycle */
+static void rps_event_accept(rps_event_t *ev);
+static void rps_http_wait_request_handler(rps_event_t *ev);
+static rps_msec_t rps_event_find_timer(void);
+static void rps_event_expire_timers(void);
 
 static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
 
@@ -137,7 +148,7 @@ void sig_handler(int sig){
         rps_quit = 1;
         break;
     case SIGCHLD:
-        rps_reap = 0;
+        rps_reap = 1;
         break;
     default:
         break;
@@ -244,39 +255,251 @@ static void rps_worker_process_init(rps_cycle_t * cycle){
     
 }
 static void rps_worker_process_cycle(rps_cycle_t * cycle){
-    
-    rps_listening_t     *listening;
-    rps_fd_t             conn_fd;
-    struct sockaddr      sa;
-    socklen_t            len;
-    rps_connection_t    *connection;
 
-    len = sizeof(sa);
-    listening = cycle -> listening.elts;
+    rps_listening_t            *listening;
+    rps_connection_t           *c;
+    rps_event_module_t         *engine;
+    rps_msec_t                  timer;
+    rps_uint_t                  i;
+
+    rps_cycle = cycle;
     rps_worker_process_init(cycle);
-    /**
-     * 目前m
+
+    /*
+     * 线程阻塞模式（if_pthread == 1）：简单 accept + 每连接一线程，
+     * 保留原有逻辑。
      */
-    if (cycle -> event_type == 1){
-        while(1){
-            conn_fd = accept(listening->fd,&sa,&len);
-            if (conn_fd == -1){
+    if (cycle->if_pthread == 1) {
+        listening = cycle->listening.elts;
+        for (;;) {
+            rps_connection_t    *conn;
+            struct sockaddr      sa;
+            socklen_t            len = sizeof(sa);
+            rps_fd_t             conn_fd;
+
+            conn_fd = accept(listening->fd, &sa, &len);
+            if (conn_fd == -1) {
                 continue;
             }
-            connection = rps_get_connection(cycle, cycle -> log, listening);
-            connection -> fd = conn_fd;
-            pthread_t   new_thread;
+            conn = rps_get_connection(cycle, cycle->log, listening);
+            if (conn == NULL) {
+                close(conn_fd);
+                continue;
+            }
+            conn->fd = conn_fd;
+            pthread_t new_thread;
+            /* TODO: 线程处理逻辑 */
         }
     }
-    /**
-     * 未来的epoll,iouring
-     */
-    else{
 
-        while(1){
-    
+    /*
+     * 事件驱动模式：epoll + 非阻塞 I/O
+     */
+    engine = cycle->event_engine;
+    if (engine == NULL) {
+        rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
+                      "no event engine configured");
+        return;
+    }
+
+    /* 为每个监听端口注册 accept 事件 */
+    listening = cycle->listening.elts;
+    for (i = 0; i < cycle->listening.nelts; i++) {
+        if (!listening[i].open) {
+            continue;
+        }
+
+        rps_set_nonblocking(listening[i].fd);
+
+        c = rps_get_connection(cycle, cycle->log, &listening[i]);
+        if (c == NULL) {
+            rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
+                          "no available connection for listening socket");
+            return;
+        }
+        c->fd         = listening[i].fd;
+        c->read->handler = rps_event_accept;
+        c->read->data    = c;
+
+        if (engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
+            rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
+                          "failed to add listen event to epoll");
+            return;
+        }
+    }
+
+    /* 主事件循环 */
+    for (;;) {
+        if (rps_terminate || rps_quit) {
+            break;
+        }
+
+        timer = rps_event_find_timer();
+
+        engine->process_events(cycle, timer);
+
+        rps_event_expire_timers();
+    }
+}
+
+/*
+ * 监听 socket 读就绪 → accept 新连接 → 创建 request → 注册读事件
+ */
+static void
+rps_event_accept(rps_event_t *ev)
+{
+    rps_connection_t       *c, *new_c;
+    rps_listening_t        *ls;
+    rps_http_request_t     *r;
+    rps_fd_t                fd;
+    struct sockaddr         sa;
+    socklen_t               len;
+
+    c  = ev->data;
+    ls = c->listenling;
+
+    len = sizeof(sa);
+    fd  = accept(ls->fd, &sa, &len);
+
+    if (fd == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        }
+        rps_log_error(RPS_LOG_ERR, rps_cycle->log, errno,
+                      "accept failed");
+        return;
+    }
+
+    new_c = rps_get_connection(rps_cycle, rps_cycle->log, ls);
+    if (new_c == NULL) {
+        rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
+                      "no free connection, dropping");
+        close(fd);
+        return;
+    }
+
+    new_c->fd = fd;
+    rps_set_nonblocking(fd);
+
+    r = rps_http_create_request(new_c);
+    if (r == NULL) {
+        rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
+                      "failed to create request");
+        rps_close_connection(new_c);
+        rps_free_connection(new_c, rps_cycle);
+        return;
+    }
+    new_c->data = r;
+
+    new_c->read->handler = rps_http_wait_request_handler;
+    new_c->read->data    = new_c;
+
+    rps_cycle->event_engine->add_event(new_c->read, RPS_READ_EVENT);
+}
+
+
+/*
+ * 客户端连接上有数据到达 → 读入 buffer → 解析 → 进入阶段引擎
+ */
+static void
+rps_http_wait_request_handler(rps_event_t *ev)
+{
+    rps_connection_t           *c;
+    rps_http_request_t         *r;
+    rps_buf_t                  *b;
+    ssize_t                     n;
+    rps_int_t                   rc;
+    rps_http_core_main_conf_t  *cmcf;
+    rps_http_conf_container_t  *container;
+
+    c = ev->data;
+    r = c->data;
+
+    if (r == NULL) {
+        return;
+    }
+
+    b = r->request_body;
+
+    /* 从 socket 读数据 */
+    n = rps_unix_recv(c, b->last, (size_t)(b->end - b->last));
+    if (n <= 0) {
+        if (n == 0 || (errno != EAGAIN && errno != EINTR)) {
+            /* 对端关闭或出错 */
+            rps_http_finalize_request(r, RPS_ERROR);
+            return;
+        }
+        return; /* EAGAIN — 等下次读事件 */
+    }
+    b->last += n;
+
+    /* 状态机：按 parse_status 依次调用解析 */
+    for (;;) {
+        if (r->parse_status == 0) {
+            rc = rps_http_parse_request_line(r);
+            if (rc == RPS_HTTP_PARSE_EAGIN) {
+                return; /* 数据不够，等下次读 */
+            }
+            if (rc == RPS_HTTP_PARSE_ERROR) {
+                rps_http_finalize_request(r, RPS_ERROR);
+                return;
+            }
+            /* OK → parse_status 已置 1，继续解析 header */
+        }
+
+        if (r->parse_status == 1) {
+            rc = rps_http_parse_headers(r);
+            if (rc == RPS_HTTP_PARSE_EAGIN) {
+                return;
+            }
+            if (rc == RPS_HTTP_PARSE_ERROR) {
+                rps_http_finalize_request(r, RPS_ERROR);
+                return;
+            }
+            /* OK → parse_status 已置 2，进入阶段引擎 */
+        }
+
+        if (r->parse_status == 2) {
+            /*
+             * 阶段引擎需要 main_conf。
+             * 从第一个 server 的 main_conf 获取（FIND_CONFIG phase 会匹配具体 server）。
+             */
+            if (r->main_conf == NULL) {
+                container = rps_cycle->conf_ctx[rps_http_module.index];
+                if (container != NULL) {
+                    r->main_conf = container->main_conf;
+                }
+            }
+            cmcf = r->main_conf ? r->main_conf[rps_http_core_module.ctx_index] : NULL;
+            if (cmcf == NULL) {
+                rps_http_finalize_request(r, RPS_ERROR);
+                return;
+            }
+
+            rc = rps_http_run_phases(r, cmcf);
+            (void)rc;
+            return;
         }
     }
 }
 
+
+static rps_msec_t
+rps_event_find_timer(void)
+{
+    /*
+     * TODO: 遍历红黑树找最近到期定时器
+     * 当前无定时器需求，返回 -1 表示无限等待
+     */
+    return -1;
+}
+
+static void
+rps_event_expire_timers(void)
+{
+    /*
+     * TODO: 遍历红黑树，触发已到期的定时器回调
+     * 当前无定时器需求，空实现
+     */
+}
 

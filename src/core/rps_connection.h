@@ -13,7 +13,7 @@ typedef struct rps_listening_s  rps_listening_t;
 
 struct rps_listening_s {
     rps_fd_t            fd;             /* 监听套接字的句柄 */
-    struct sockaddr    *sockaddr;       /* 监听的本地地址和端口 */
+    struct sockaddr     sockaddr;       /* 监听的本地地址和端口 */
     socklen_t           socklen;        /* 地址长度 */
     
     rps_str_t           addr_text;      /* 格式化后的字符串，如 "0.0.0.0:80" */
@@ -63,5 +63,9 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log,rps_list
 void rps_close_connection(rps_connection_t *c);
 void rps_free_connection(rps_connection_t *c,rps_cycle_t *cycle);
 
-rps_int_t rps_set_nonblocking(rps_fd_t s); 
+rps_int_t rps_set_nonblocking(rps_fd_t s);
+
+/* socket I/O 基础操作 */
+ssize_t rps_unix_recv(rps_connection_t *c, u_char *buf, size_t size);
+ssize_t rps_unix_send(rps_connection_t *c, u_char *buf, size_t size); 
 #endif

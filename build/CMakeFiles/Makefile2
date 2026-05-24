@@ -81,12 +81,12 @@ clean: CMakeFiles/RPS.dir/clean
 CMakeFiles/RPS.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23 "Built target RPS"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/jack/RPS/build/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24 "Built target RPS"
 .PHONY : CMakeFiles/RPS.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/RPS.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/jack/RPS/build/CMakeFiles 23
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/jack/RPS/build/CMakeFiles 24
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/RPS.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /home/jack/RPS/build/CMakeFiles 0
 .PHONY : CMakeFiles/RPS.dir/rule

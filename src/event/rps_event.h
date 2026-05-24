@@ -20,12 +20,22 @@ typedef struct{
     void ** event_conf;
 }rps_event_container_t;
 
-typedef struct {
-    
+/* 事件操作标志 */
+#define RPS_READ_EVENT    0
+#define RPS_WRITE_EVENT   1
+
+typedef struct rps_event_module_s {
+
     void        *(*create_conf)(rps_cycle_t * cycle);
     char        *(*init_conf)(rps_cycle_t   *cycle);
-    
-}rps_event_module_t;
+
+    /* 事件驱动引擎必须实现的操作 */
+    rps_int_t   (*add_event)(rps_event_t *ev, rps_uint_t event);
+    rps_int_t   (*del_event)(rps_event_t *ev, rps_uint_t event);
+    rps_int_t   (*process_events)(rps_cycle_t *cycle, rps_msec_t timer);
+    rps_int_t   (*init_process)(rps_cycle_t *cycle);
+
+} rps_event_module_t;
 
 struct rps_event_s{
     

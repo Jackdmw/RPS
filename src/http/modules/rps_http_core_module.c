@@ -4,6 +4,11 @@
 #include "core/rps_module.h"
 #include "core/rps_buf.h"
 #include "core/rps_palloc.h"
+#include "core/rps_connection.h"
+
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <stdio.h>
 
 char *rps_set_server_block(rps_conf_t *cf,rps_command_t *cmd,void *conf);
 char *rps_set_server_name(rps_conf_t *cf,rps_command_t *cmd,void *conf);
@@ -361,7 +366,10 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
 {
     rps_http_conf_container_t  *container;
     rps_http_core_main_conf_t  *cmcf;
+    rps_cycle_t                *cycle;
+    rps_uint_t                  i;
 
+    cycle = cf->cycle;
     container = cf->ctx;
     cmcf      = container->main_conf[rps_http_core_module.ctx_index];
 
@@ -384,6 +392,77 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
                                      rps_http_core_default_handler,
                                      cmcf);
 
+    /*
+     * 遍历所有 server {} 块，为每个 listen 指令创建 listening 项。
+     *
+     * 当前只支持 "listen <port>;"（地址固定为 INADDR_ANY），
+     * 后续需扩展为 "listen <addr>:<port>;" 的完整格式。
+     */
+    for (i = 0; i < cmcf->servers.nelts; i++) {
+        rps_http_conf_container_t  **srv_containers;
+        rps_http_conf_container_t   *srv_container;
+        rps_http_core_srv_conf_t    *srv_conf;
+        rps_listening_t             *ls;
+        struct sockaddr_in          *sin;
+        rps_pool_t                  *pool;
+        char                         addr_text[64];
+
+        pool = cycle->pool;
+
+        srv_containers = cmcf->servers.elts;
+        srv_container  = srv_containers[i];
+        if (srv_container == NULL) {
+            continue;
+        }
+
+        srv_conf = srv_container->srv_conf[rps_http_core_module.ctx_index];
+        if (srv_conf == NULL) {
+            continue;
+        }
+
+        /* 未配置 listen 的 server 跳过 */
+        if (srv_conf->port == RPS_CONF_UNSET_UINT) {
+            continue;
+        }
+
+        snprintf(addr_text, sizeof(addr_text), "0.0.0.0:%lu",
+                 srv_conf->port);
+
+        ls = rps_array_push(&cycle->listening);
+        if (ls == NULL) {
+            return RPS_ERROR;
+        }
+
+        rps_memzero(ls, sizeof(rps_listening_t));
+
+        /* 构造 sockaddr_in，拷贝到 sockaddr 值字段（当前不是指针） */
+        {
+            struct sockaddr_in  sin;
+            memset(&sin, 0, sizeof(sin));
+            sin.sin_family      = AF_INET;
+            sin.sin_port        = htons((in_port_t)srv_conf->port);
+            sin.sin_addr.s_addr = INADDR_ANY;
+            memcpy(&ls->sockaddr, &sin, sizeof(sin));
+        }
+
+        ls->fd        = -1;                    /* 由 open_listening_sockets 创建 */
+        ls->socklen   = sizeof(struct sockaddr_in);
+        ls->type      = SOCK_STREAM;
+        ls->backlog   = 511;
+        ls->servers   = srv_container;
+        ls->handler   = NULL;                /* epoll 模式下由 worker 循环设置 */
+        ls->pool      = pool;
+        ls->log       = cycle->log;
+        ls->addr_text.data = (u_char *)rps_palloc(pool, strlen(addr_text) + 1);
+        if (ls->addr_text.data != NULL) {
+            memcpy(ls->addr_text.data, addr_text, strlen(addr_text) + 1);
+            ls->addr_text.len = strlen(addr_text);
+        }
+
+        rps_log_error(RPS_LOG_INFO, cycle->log, 0,
+                      "register listening: %s", addr_text);
+    }
+    
     /* 初始化阶段引擎 */
     if (rps_http_init_phase_engine(cmcf) != RPS_OK) {
         return RPS_ERROR;

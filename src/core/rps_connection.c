@@ -2,15 +2,12 @@
 #include "rps_cycle.h"
 #include "rps_config.h"
 #include "http/rps_http_core.h"
+#include <fcntl.h>
 
 rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
     rps_listening_t            *listen_array;
     rps_uint_t                  n;
-    struct sockaddr            *sockaddr;
     rps_uint_t                  i;
-    rps_http_conf_container_t  *server;
-    rps_int_t                   c;
-    rps_event_conf_t           *conf;
     
     listen_array = cycle -> listening.elts;
     n = cycle -> listening.nelts;
@@ -21,14 +18,8 @@ rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
         
     
 
-        bind(listen_array[i].fd,listen_array[i].sockaddr,listen_array[i].socklen);
-        
-        server = listen_array[i].servers;
-        /**
-         * 这里后面把http模块完善后，应该从server中拿虚拟主机处理的连接数，然后给端口监听。
-         */
-        
-        listen(listen_array[i].fd,listen_array[i].backlog);
+        bind(listen_array[i].fd, &listen_array[i].sockaddr, listen_array[i].socklen);
+        listen(listen_array[i].fd, listen_array[i].backlog);
         rps_log_error(RPS_LOG_INFO,cycle -> log,0,"listen port %s has been create",listen_array[i].addr_text.data);
         listen_array[i].open = 1;
     }
@@ -66,17 +57,63 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         if(new_conn -> pool == NULL){
             return NULL;
         }
+
+        /* 读写事件指向连接自身 */
+        if (new_conn->read) {
+            new_conn->read->data = new_conn;
+        }
+        if (new_conn->write) {
+            new_conn->write->data = new_conn;
+        }
+
         return new_conn;
     }
 }
 void rps_free_connection(rps_connection_t *c,rps_cycle_t *cycle){
-    rps_destroy_pool(c->pool);
+    if ( c -> pool != NULL){
+        rps_destroy_pool(c->pool);
+        c -> pool = NULL;
+    }
     c -> data = cycle -> free_connection;
     cycle -> free_connection = c;
     
 }
 void rps_close_connection(rps_connection_t *c){
-    close (c->fd);
-    c -> fd = 0;
+    if (c->fd > 0) {
+        close(c->fd);
+        c->fd = 0;
+    }
+    if ( c -> pool != NULL){
+        rps_destroy_pool(c -> pool);
+        c -> pool = NULL;
+    }
+}
 
+rps_int_t
+rps_set_nonblocking(rps_fd_t s)
+{
+    int flags;
+
+    flags = fcntl(s, F_GETFL, 0);
+    if (flags == -1) {
+        return RPS_ERROR;
+    }
+
+    if (fcntl(s, F_SETFL, flags | O_NONBLOCK) == -1) {
+        return RPS_ERROR;
+    }
+
+    return RPS_OK;
+}
+
+ssize_t
+rps_unix_recv(rps_connection_t *c, u_char *buf, size_t size)
+{
+    return recv(c->fd, buf, size, 0);
+}
+
+ssize_t
+rps_unix_send(rps_connection_t *c, u_char *buf, size_t size)
+{
+    return send(c->fd, buf, size, 0);
 }

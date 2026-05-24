@@ -78,7 +78,15 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
  /home/jack/RPS/src/event/rps_event.h \
  /home/jack/RPS/src/core/rps_config.h /home/jack/RPS/src/core/rps_log.h \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
- /home/jack/RPS/src/core/rps_core_module.h /usr/include/signal.h \
+ /home/jack/RPS/src/core/rps_core_module.h \
+ /home/jack/RPS/src/http/rps_http_core.h \
+ /home/jack/RPS/src/core/rps_conf_file.h \
+ /home/jack/RPS/src/core/rps_string.h \
+ /home/jack/RPS/src/http/rps_http_phases.h \
+ /home/jack/RPS/src/core/rps_array.h \
+ /home/jack/RPS/src/http/rps_http_parse.h \
+ /home/jack/RPS/src/http/modules/rps_http_core_module.h \
+ /usr/include/signal.h \
  /usr/include/x86_64-linux-gnu/bits/signum-generic.h \
  /usr/include/x86_64-linux-gnu/bits/signum-arch.h \
  /usr/include/x86_64-linux-gnu/bits/types/sig_atomic_t.h \

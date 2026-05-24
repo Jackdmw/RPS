@@ -10,6 +10,7 @@ rps_module_t *rps_modules[] = {
     &rps_core_module,
     &rps_event_core_module,
     &rps_event_module,
+    &rps_epoll_module,
     &rps_http_module,
     &rps_http_core_module,
     &rps_http_proxy_module,

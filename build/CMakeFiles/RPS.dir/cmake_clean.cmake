@@ -27,6 +27,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/RPS.dir/src/core/rps_rbtree.c.o.d"
   "CMakeFiles/RPS.dir/src/core/rps_string.c.o"
   "CMakeFiles/RPS.dir/src/core/rps_string.c.o.d"
+  "CMakeFiles/RPS.dir/src/event/modules/rps_epoll_module.c.o"
+  "CMakeFiles/RPS.dir/src/event/modules/rps_epoll_module.c.o.d"
   "CMakeFiles/RPS.dir/src/event/modules/rps_event_core.c.o"
   "CMakeFiles/RPS.dir/src/event/modules/rps_event_core.c.o.d"
   "CMakeFiles/RPS.dir/src/event/rps_event_module.c.o"

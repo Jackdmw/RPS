@@ -465,6 +465,30 @@ src/core/rps_string.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/core/rps_string.c.s
 .PHONY : src/core/rps_string.c.s
 
+src/event/modules/rps_epoll_module.o: src/event/modules/rps_epoll_module.c.o
+.PHONY : src/event/modules/rps_epoll_module.o
+
+# target to build an object file
+src/event/modules/rps_epoll_module.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/event/modules/rps_epoll_module.c.o
+.PHONY : src/event/modules/rps_epoll_module.c.o
+
+src/event/modules/rps_epoll_module.i: src/event/modules/rps_epoll_module.c.i
+.PHONY : src/event/modules/rps_epoll_module.i
+
+# target to preprocess a source file
+src/event/modules/rps_epoll_module.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/event/modules/rps_epoll_module.c.i
+.PHONY : src/event/modules/rps_epoll_module.c.i
+
+src/event/modules/rps_epoll_module.s: src/event/modules/rps_epoll_module.c.s
+.PHONY : src/event/modules/rps_epoll_module.s
+
+# target to generate assembly for a file
+src/event/modules/rps_epoll_module.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/event/modules/rps_epoll_module.c.s
+.PHONY : src/event/modules/rps_epoll_module.c.s
+
 src/event/modules/rps_event_core.o: src/event/modules/rps_event_core.c.o
 .PHONY : src/event/modules/rps_event_core.o
 
@@ -708,6 +732,9 @@ help:
 	@echo "... src/core/rps_string.o"
 	@echo "... src/core/rps_string.i"
 	@echo "... src/core/rps_string.s"
+	@echo "... src/event/modules/rps_epoll_module.o"
+	@echo "... src/event/modules/rps_epoll_module.i"
+	@echo "... src/event/modules/rps_epoll_module.s"
 	@echo "... src/event/modules/rps_event_core.o"
 	@echo "... src/event/modules/rps_event_core.i"
 	@echo "... src/event/modules/rps_event_core.s"

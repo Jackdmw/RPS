@@ -73,7 +73,7 @@ char * rps_set_use(rps_conf_t *cf,rps_command_t *cmd,void* conf){
     }
     else if ( rps_strcmp_with_cstr(values[1],"thread_block")){
         ccf -> use = (rps_str_t)rps_string("thread_block");
-        cf -> cycle -> event_type = 1;
+        cf -> cycle -> if_pthread = 1;
     }
     else {
         rps_log_error(RPS_LOG_ERR,cf->log,0,"command \"use\" 's attribute could only in \"epoll\" or \"io_uring\"!");
