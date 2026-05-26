@@ -24,6 +24,7 @@ char *rps_http_core_merge_loc_conf(rps_pool_t *pool, void *parent, void *child);
 static rps_int_t rps_http_core_postconfiguration(rps_conf_t *cf);
 static rps_int_t rps_http_core_default_handler(rps_http_request_t *r);
 static rps_int_t rps_http_core_find_config_handler(rps_http_request_t *r);
+static rps_int_t rps_http_core_placeholder_handler(rps_http_request_t *r);
 
 rps_command_t rps_http_core_module_commands[] = {
     
@@ -385,6 +386,20 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
                                      cmcf);
 
     /*
+     * POST_REWRITE / POST_ACCESS 是基础设施 phase，即使没有业务模块
+     * 注册 handler，其 checker 也必须运行：
+     *   - POST_REWRITE: 检测 uri_changed，内部重定向 + 防死循环
+     *   - POST_ACCESS:  汇总鉴权结果，跳转到下一阶段
+     * 注册空 handler 确保展平数组中始终有条目，checker 不会被跳过。
+     */
+    rps_http_register_phase_handler(RPS_HTTP_POST_REWRITE_PHASE,
+                                     rps_http_core_placeholder_handler,
+                                     cmcf);
+    rps_http_register_phase_handler(RPS_HTTP_POST_ACCESS_PHASE,
+                                     rps_http_core_placeholder_handler,
+                                     cmcf);
+
+    /*
      * 注册默认 content handler 作为兜底
      * 当 proxy_pass / static 等模块没有匹配时，返回 "Hello from RPS!"
      */
@@ -521,7 +536,6 @@ static rps_int_t
 rps_http_core_default_handler(rps_http_request_t *r)
 {
     rps_buf_t *body;
-
     if (rps_http_send_header(r) != RPS_OK) {
         return RPS_ERROR;
     }
@@ -544,6 +558,17 @@ rps_http_core_default_handler(rps_http_request_t *r)
  */
 static rps_int_t
 rps_http_core_find_config_handler(rps_http_request_t *r)
+{
+    return RPS_OK;
+}
+
+/*
+ * 基础设施 phase 占位 handler。
+ * 实际工作由各 phase 的 checker 完成，handler 本身为空。
+ * 仅为确保展平数组中有该 phase 的条目，checker 不会被跳过。
+ */
+static rps_int_t
+rps_http_core_placeholder_handler(rps_http_request_t *r)
 {
     return RPS_OK;
 }

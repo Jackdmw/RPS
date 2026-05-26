@@ -77,7 +77,6 @@ rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out)
     rps_chain_t *cl;
     ssize_t      n;
     size_t       size;
-
     for (cl = out; cl != NULL; cl = cl->next) {
         if (cl->buf == NULL) {
             continue;
@@ -101,7 +100,7 @@ rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out)
             return RPS_AGAIN;
         }
     }
-
+    printf("OK\n");
     return RPS_OK;
 }
 
@@ -115,10 +114,6 @@ rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc)
     rps_connection_t  *c;
 
     c = r->connection;
-
-    if (rc != RPS_OK) {
-        r->keepalive = 0;
-    }
 
     if (r->keepalive && c && rc == RPS_OK) {
         /* keepalive: 不做清理，由调用者在事件循环中重建 request */

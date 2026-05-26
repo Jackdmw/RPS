@@ -323,7 +323,7 @@ rps_http_proxy_handler(rps_http_request_t *r)
     if (r->loc_conf == NULL) {
         return RPS_DECLINED;
     }
-
+    
     plcf = r->loc_conf[rps_http_proxy_module.ctx_index];
     if (plcf == NULL || plcf->proxy_pass.data == NULL) {
         return RPS_DECLINED;

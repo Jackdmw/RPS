@@ -19,6 +19,7 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
   /home/jack/RPS/src/core/rps_string.h \
   /home/jack/RPS/src/event/rps_event.h \
   /home/jack/RPS/src/http/modules/rps_http_core_module.h \
+  /home/jack/RPS/src/http/modules/rps_http_proxy_module.h \
   /home/jack/RPS/src/http/rps_http_core.h \
   /home/jack/RPS/src/http/rps_http_parse.h \
   /home/jack/RPS/src/http/rps_http_phases.h \
@@ -2627,10 +2628,6 @@ CMakeFiles/RPS.dir/src/http/rps_http_response.c.o: /home/jack/RPS/src/http/rps_h
 
 /home/jack/RPS/src/event/modules/rps_epoll_module.c:
 
-/home/jack/RPS/src/http/modules/rps_http_proxy_module.h:
-
-/home/jack/RPS/src/core/rps_string.c:
-
 /home/jack/RPS/src/core/rps_palloc.c:
 
 /home/jack/RPS/src/core/rps_module.c:
@@ -2714,6 +2711,10 @@ CMakeFiles/RPS.dir/src/http/rps_http_response.c.o: /home/jack/RPS/src/http/rps_h
 /home/jack/RPS/src/core/rps_palloc.h:
 
 /usr/include/x86_64-linux-gnu/bits/fcntl-linux.h:
+
+/home/jack/RPS/src/core/rps_string.c:
+
+/home/jack/RPS/src/http/modules/rps_http_proxy_module.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/sig_atomic_t.h:
 
@@ -2971,8 +2972,8 @@ CMakeFiles/RPS.dir/src/http/rps_http_response.c.o: /home/jack/RPS/src/http/rps_h
 
 /usr/include/asm-generic/socket.h:
 
-/usr/include/x86_64-linux-gnu/bits/setjmp.h:
-
 /usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h:
+
+/usr/include/x86_64-linux-gnu/bits/setjmp.h:
 
 /usr/include/x86_64-linux-gnu/sys/wait.h:

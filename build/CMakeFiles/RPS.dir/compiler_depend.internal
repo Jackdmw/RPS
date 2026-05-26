@@ -20,6 +20,7 @@ CMakeFiles/RPS.dir/src/core/rps.c.o
  /home/jack/RPS/src/core/rps_string.h
  /home/jack/RPS/src/event/rps_event.h
  /home/jack/RPS/src/http/modules/rps_http_core_module.h
+ /home/jack/RPS/src/http/modules/rps_http_proxy_module.h
  /home/jack/RPS/src/http/rps_http_core.h
  /home/jack/RPS/src/http/rps_http_parse.h
  /home/jack/RPS/src/http/rps_http_phases.h

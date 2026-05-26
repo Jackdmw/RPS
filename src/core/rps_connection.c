@@ -74,15 +74,18 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         return new_conn;
     }
 }
-void rps_free_connection(rps_connection_t *c,rps_cycle_t *cycle){
-    if ( c -> pool != NULL){
-        rps_destroy_pool(c->pool);
-        c -> pool = NULL;
-    }
-    c -> data = cycle -> free_connection;
-    cycle -> free_connection = c;
+/**
+ * 释放连接对象的一切，并且还回cycle
+ */
+void rps_free_connection(rps_connection_t *c){
+    rps_close_connection(c);
+    c -> data = c -> cycle -> free_connection;
+    c -> cycle -> free_connection = c;
     
 }
+/**
+ * 用于关闭连接，但是，不会还会给连接池
+ */
 void rps_close_connection(rps_connection_t *c){
     if (c->fd > 0) {
         close(c->fd);

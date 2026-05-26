@@ -13,7 +13,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <time.h>
-
+#include "http/modules/rps_http_proxy_module.h"
 typedef struct
 {
     rps_str_t   conf_file;
@@ -104,6 +104,17 @@ int main(int argc,char **argv){
     rps_event_container_t *container = cycle->conf_ctx[2];
     rps_event_conf_t * e = container->event_conf[0];
     printf("\nuse is %s\nworker_connections is %lu \n",e->use.data,e->worker_connections);
+    
+    rps_http_conf_container_t     *http_root_container = cycle ->conf_ctx[rps_http_module.index];
+    rps_http_core_main_conf_t     *hcmcf = http_root_container->main_conf[rps_http_core_module.ctx_index];
+    rps_http_conf_container_t     *http_srv_container = *(void**)hcmcf -> servers.elts;
+    rps_http_core_srv_conf_t      *hcscf = http_srv_container -> srv_conf[rps_http_core_module.ctx_index];
+    rps_http_conf_container_t     *http_loc_container = *(void**)hcscf -> locations.elts;
+    rps_http_core_loc_conf_t      *hclcf = http_loc_container -> loc_conf[rps_http_core_module.ctx_index];
+    rps_http_proxy_loc_conf_t     *plcf = http_loc_container -> loc_conf[rps_http_proxy_module.ctx_index];
+
+    printf("proxy_host: %s\nproxy_port: %lu\nproxy_uri: %s\n", plcf->upstream_host.data,plcf->upstream_port, plcf->upstream_uri.data);
+
 
     rps_master_process_cycle(cycle);
 }
@@ -546,8 +557,7 @@ rps_event_accept(rps_event_t *ev)
     if (r == NULL) {
         rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
                       "failed to create request");
-        rps_close_connection(new_c);
-        rps_free_connection(new_c, rps_cycle);
+        rps_free_connection(new_c);
         return;
     }
     new_c->data = r;
@@ -592,7 +602,8 @@ rps_http_wait_request_handler(rps_event_t *ev)
         return;
     }
     b->last += n;
-    printf ("accept from link: \n %s", b -> pos);
+    printf ("accept from link: \n %s\n", b -> pos);
+
     /* 状态机：按 parse_status 依次调用解析 */
     for (;;) {
         if (r->parse_status == 0) {
@@ -642,9 +653,12 @@ rps_http_wait_request_handler(rps_event_t *ev)
                 goto done;
             }
 
-            /* TODO: 这里，rc 可能会有eagain的情况，现在未知 */
-            rc = rps_http_run_phases(r, cmcf);
-            rps_http_finalize_request(r, rc);
+            /*
+             * run_phases 在内部已通过 checker 或 sentinel 调用 finalize，
+             * 此处不再重复调用，避免非 keepalive 请求 double free pool。
+             * TODO: EAGAIN 路径需要单独处理（request 挂起等 I/O，不能进 done 回收）
+             */
+            rps_http_run_phases(r, cmcf);
             goto done;
         }
     }
@@ -657,14 +671,12 @@ done:
             rps_http_close_request(r);
             c->pool = rps_create_pool(1024);
             if (c->pool == NULL) {
-                rps_close_connection(c);
-                rps_free_connection(c, rps_cycle);
+                rps_free_connection(c);
                 return;
             }
             r = rps_http_create_request(c);
             if (r == NULL) {
-                rps_close_connection(c);
-                rps_free_connection(c, rps_cycle);
+                rps_free_connection(c);
                 return;
             }
             c->data = r;
@@ -672,6 +684,9 @@ done:
         c->read->handler = rps_http_wait_request_handler;
         c->read->data    = c;
         rps_cycle->event_engine->add_event(c->read, RPS_READ_EVENT);
+    } else if (c && c->close) {
+        /* 非 keepalive / 错误：归还连接到空闲池 */
+        rps_free_connection(c);
     }
 }
 

@@ -402,13 +402,15 @@ typedef struct {
 
 | 钩子 | 函数 | 说明 |
 |---|---|---|
-| `postconfiguration` | `rps_http_core_postconfiguration` | **所有 HTTP 模块配置解析完成后调用**。执行以下工作：1) 注册 FIND_CONFIG phase handler（`rps_http_core_find_config_handler`）作为占位；2) 注册默认 CONTENT phase handler（`rps_http_core_default_handler`）作为兜底；3) 遍历所有 server 块，为每个 `listen` 指令创建 `rps_listening_t` 并添加到 `cycle->listening`；4) 遍历所有 HTTP 模块执行 main→server→location 三级配置合并。 |
+| `postconfiguration` | `rps_http_core_postconfiguration` | **所有 HTTP 模块配置解析完成后调用**。执行以下工作：1) 为 FIND_CONFIG / POST_REWRITE / POST_ACCESS 三个基础设施 phase 注册占位 handler，确保这些 phase 的 checker 始终运行，不会因该 phase 无业务 handler 而被跳过；2) 注册默认 CONTENT phase handler（`rps_http_core_default_handler`）作为兜底；3) 遍历所有 server 块，为每个 `listen` 指令创建 `rps_listening_t` 并添加到 `cycle->listening`；4) 遍历所有 HTTP 模块执行 main→server→location 三级配置合并。 |
 
 ### 阶段 Handler 函数
 
 | Handler | 注册阶段 | 说明 |
 |---|---|---|
 | `rps_http_core_find_config_handler` | `RPS_HTTP_FIND_CONFIG_PHASE` | 占位 handler，实际路由匹配工作由 phase checker（`rps_http_core_find_config_phase`）完成：根据 Host 头匹配 server，根据 URI 匹配 location，将匹配到的 `srv_conf` / `loc_conf` 赋值给 `r->srv_conf` / `r->loc_conf`。Handler 本身为空函数体，仅确保展平数组中有该项。 |
+| `rps_http_core_placeholder_handler` | `RPS_HTTP_POST_REWRITE_PHASE` | 占位 handler，确保 POST_REWRITE checker 始终运行。checker 负责检测 `uri_changed` 标志：若 URI 在上游被改写则跳回 FIND_CONFIG 重新路由，同时递增 `internal_redirect` 计数器（超过 10 次则终止请求防死循环）。 |
+| `rps_http_core_placeholder_handler` | `RPS_HTTP_POST_ACCESS_PHASE` | 占位 handler，确保 POST_ACCESS checker 始终运行。checker 负责汇总鉴权结果并跳转到下一阶段（PRECONTENT）。 |
 | `rps_http_core_default_handler` | `RPS_HTTP_CONTENT_PHASE` | 默认内容处理器。当没有其他 content handler（如 proxy）匹配时，发送 `HTTP 200` 头并返回 `Hello from RPS!\n` 作为响应体。 |
 
 ### 生命周期钩子
@@ -502,19 +504,50 @@ typedef struct {
 
 ### HTTP 11 阶段引擎
 
-| 阶段枚举 | 值 | 说明 | 当前注册的 handler |
-|---|---|---|---|
-| `RPS_HTTP_POST_READ_PHASE` | 0 | 请求头读取完毕 | 无 |
-| `RPS_HTTP_SERVER_REWRITE_PHASE` | 1 | Server 级 URI 重写 | 无 |
-| `RPS_HTTP_FIND_CONFIG_PHASE` | 2 | 虚拟主机 + location 匹配 | `rps_http_core_find_config_handler` |
-| `RPS_HTTP_REWRITE_PHASE` | 3 | Location 级 URI 重写 | 无 |
-| `RPS_HTTP_POST_REWRITE_PHASE` | 4 | 重写后检查（若 URI 变更则跳回 FIND_CONFIG） | 无 |
-| `RPS_HTTP_PREACCESS_PHASE` | 5 | 访问预控 | 无 |
-| `RPS_HTTP_ACCESS_PHASE` | 6 | 访问控制 | 无 |
-| `RPS_HTTP_POST_ACCESS_PHASE` | 7 | 访问控制后处理 | 无 |
-| `RPS_HTTP_PRECONTENT_PHASE` | 8 | 内容预处理 | 无 |
-| `RPS_HTTP_CONTENT_PHASE` | 9 | 内容产生 | `rps_http_proxy_handler` → `rps_http_core_default_handler`（兜底） |
-| `RPS_HTTP_LOG_PHASE` | 10 | 日志记录 | 无 |
+每个阶段在展平数组中可以有 0 个或多个 handler，按注册顺序执行。每个阶段有一个 checker 函数控制流程（调用 handler，根据返回值决定跳转）。
+
+| 阶段 | 值 | checker | 注册的 handler（按顺序） | 注册来源 |
+|---|---|---|---|---|
+| `POST_READ` | 0 | `rps_http_core_generic_phase` | 无 | — |
+| `SERVER_REWRITE` | 1 | `rps_http_core_rewrite_phase` | 无 | — |
+| `FIND_CONFIG` | 2 | `rps_http_core_find_config_phase` | `rps_http_core_find_config_handler` | `rps_http_core_module.postconfiguration` |
+| `REWRITE` | 3 | `rps_http_core_rewrite_phase` | 无 | — |
+| `POST_REWRITE` | 4 | `rps_http_core_post_rewrite_phase` | `rps_http_core_placeholder_handler` | `rps_http_core_module.postconfiguration` |
+| `PREACCESS` | 5 | `rps_http_core_generic_phase` | 无 | — |
+| `ACCESS` | 6 | `rps_http_core_access_phase` | 无 | — |
+| `POST_ACCESS` | 7 | `rps_http_core_post_access_phase` | `rps_http_core_placeholder_handler` | `rps_http_core_module.postconfiguration` |
+| `PRECONTENT` | 8 | `rps_http_core_generic_phase` | 无 | — |
+| `CONTENT` | 9 | `rps_http_core_content_phase` | `rps_http_proxy_handler` | `rps_http_proxy_module.postconfiguration` |
+| | | | `rps_http_core_default_handler` | `rps_http_core_module.postconfiguration` |
+| `LOG` | 10 | `rps_http_core_log_phase` | 无 | — |
+
+#### 各 handler / checker 行为说明
+
+**`rps_http_core_find_config_handler`**（FIND_CONFIG，占位）
+- 空函数，返回 `RPS_OK`。实际工作由 checker 完成，不被 checker 调用。
+
+**`rps_http_core_placeholder_handler`**（POST_REWRITE / POST_ACCESS，占位）
+- 空函数，返回 `RPS_OK`。用于确保基础设施 phase 的 checker 始终在展平数组中有条目。
+
+**`rps_http_proxy_handler`**（CONTENT，`rps_http_proxy_module`）
+- 检查 `loc_conf` 中是否配置了 `proxy_pass`，否则返回 `RPS_DECLINED`。
+- 连接 upstream → 转发请求 → 读取响应 → 返回给客户端。失败返回 502。
+
+**`rps_http_core_default_handler`**（CONTENT，兜底）
+- 当所有 content handler 都返回 `RPS_DECLINED` 时执行。返回 `Hello from RPS!\n`。
+
+#### 各 checker 行为说明
+
+| checker | 负责的阶段 | 行为 |
+|---|---|---|
+| `rps_http_core_generic_phase` | POST_READ, PREACCESS, PRECONTENT | 调用 handler。`RPS_OK` → 跳 `ph->next`；`RPS_DECLINED` → `phase_index++`；`RPS_AGAIN` → 挂起。 |
+| `rps_http_core_rewrite_phase` | SERVER_REWRITE, REWRITE | 调用 handler。`RPS_OK` → 设 `uri_changed=1`，跳回 FIND_CONFIG 重路由；`RPS_DECLINED` → `phase_index++`。 |
+| `rps_http_core_find_config_phase` | FIND_CONFIG | **不调用 handler**。遍历 servers 按 Host 头匹配虚机，前缀匹配 location。结果写入 `r->srv_conf` / `r->loc_conf`，然后 `r->phase_index = ph->next`。 |
+| `rps_http_core_post_rewrite_phase` | POST_REWRITE | **不调用 handler**。检查 `uri_changed`：若为 1 则复位标志、递增 `internal_redirect`（>10 次则终止请求）、跳回 FIND_CONFIG；否则 `r->phase_index = ph->next`。 |
+| `rps_http_core_access_phase` | ACCESS | 调用 handler。`RPS_OK` → `phase_index++`（通过，继续下一个 access handler）；`RPS_DECLINED` → `phase_index++`；拒绝则跳 `ph->next`（跳过后续 access handler，进入 POST_ACCESS）。 |
+| `rps_http_core_post_access_phase` | POST_ACCESS | **不调用 handler**。直接 `r->phase_index = ph->next`，进入 PRECONTENT。 |
+| `rps_http_core_content_phase` | CONTENT | 调用 handler。`RPS_DECLINED` → `phase_index++`（试下一个）；`RPS_OK` / `RPS_HTTP_DONE` → 调用 `rps_http_finalize_request` 结束请求。 |
+| `rps_http_core_log_phase` | LOG | 调用 handler。`RPS_OK` 或 `RPS_AGAIN` → `phase_index++` → 遇到 sentinel 结束。 |
 
 Handler 返回值：
 

@@ -113,4 +113,6 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
  /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h \
  /usr/include/x86_64-linux-gnu/bits/types/struct_itimerspec.h \
  /usr/include/x86_64-linux-gnu/bits/setjmp.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h
+ /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h \
+ /home/jack/RPS/src/http/modules/rps_http_proxy_module.h \
+ /home/jack/RPS/src/core/rps_module.h

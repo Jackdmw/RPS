@@ -40,6 +40,8 @@ struct rps_connection_s {
     rps_fd_t            fd;     /** 套接字句柄 */
     rps_event_t        *read;
     rps_event_t        *write;
+
+    rps_cycle_t        *cycle;  /*连接所属cycle*/
     
     struct sockaddr    *sockaddr;   /**远端地址 */
     rps_str_t           addr_text;  /*点分十进制字符串*/
@@ -61,7 +63,7 @@ void rps_close_listening_sockets(rps_cycle_t *cycle);
 /* 2. 连接生命周期：Accept 时和关闭时调用 */
 rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log,rps_listening_t *listening);
 void rps_close_connection(rps_connection_t *c);
-void rps_free_connection(rps_connection_t *c,rps_cycle_t *cycle);
+void rps_free_connection(rps_connection_t *c);
 
 rps_int_t rps_set_nonblocking(rps_fd_t s);
 

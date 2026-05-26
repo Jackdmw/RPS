@@ -234,17 +234,7 @@ rps_http_core_access_phase(rps_http_request_t *r,
     r->phase_index = ph->next;
     return RPS_AGAIN;
 }
-static rps_int_t
-rps_http_core_log_phase(rps_http_request_t *r,rps_http_phase_handler_t  *ph){
-    rps_int_t   rc;
-    rc = ph -> handler(r);
 
-    if (rc == RPS_OK || rc == RPS_AGAIN){
-        r -> phase_index ++;
-        return RPS_OK;
-    }
-    return  RPS_OK; 
-}
 
 /* post_access: 汇总鉴权结果*/
 static rps_int_t
@@ -269,7 +259,6 @@ rps_http_core_content_phase(rps_http_request_t *r,
     rc = ph->handler(r);
 
     if (rc == RPS_DECLINED) {
-        /* 当前 content handler 不处理，试下一个 */
         r->phase_index++;
         return RPS_AGAIN;
     }
@@ -315,7 +304,7 @@ rps_http_init_phase_engine(rps_http_core_main_conf_t *cmcf)
         rps_http_core_post_access_phase,   /* POST_ACCESS      */
         rps_http_core_generic_phase,       /* PRECONTENT       */
         rps_http_core_content_phase,       /* CONTENT          */
-        rps_http_core_log_phase,           /* LOG              */
+        rps_http_core_generic_phase,       /* LOG              */
     };
 
     total = 0;
@@ -332,7 +321,7 @@ rps_http_init_phase_engine(rps_http_core_main_conf_t *cmcf)
     if (ph == NULL) {
         return RPS_ERROR;
     }
-
+    printf("ph num is %lu\n",total);
     /*把每个 phase 的 handler 填入展平数组*/
     n = 0;
     for (i = 0; i < RPS_HTTP_PHASE_NUM; i++) {
@@ -412,14 +401,17 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
     rps_http_phase_handler_t *ph;
     rps_int_t                 rc;
 
+
     if (cmcf == NULL || cmcf->phase_engine.handlers == NULL) {
         rps_http_finalize_request(r, RPS_ERROR);
         return RPS_ERROR;
     }
 
     ph = cmcf->phase_engine.handlers;
-
+    
     while (ph[r->phase_index].checker) {
+        printf ("request has analyzed successfully, prepare to execute phases handler, index is %lu\n ",r -> phase_index);
+
         rc = ph[r->phase_index].checker(r, &ph[r->phase_index]);
 
         if (rc == RPS_OK) {

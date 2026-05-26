@@ -23,7 +23,7 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c){
     }
     request -> connection = c;
     request -> pool = c -> pool;
-
+    request -> cycle = c -> cycle;
     /*
      * 请求行字段全部置为空，后续解析起始行时填充
      */
@@ -95,16 +95,28 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c){
 
     return request;
 }
+/**
+ * 释放请求的资源（upstream + pool）。
+ * 客户端连接本身不在此释放，由外层 done: 统一管理其生命周期。
+ */
 void rps_http_close_request(rps_http_request_t *r){
+    rps_pool_t *pool;
+
+    /* 先存到栈上：r 本身在 pool 中，pool 一旦 free 就不能再读 r 的任何字段 */
+    pool = r->pool;
+
     if (r->upstream) {
-        rps_close_connection(r->upstream);
+        rps_free_connection(r->upstream);
         r->upstream = NULL;
     }
+
     if (r->connection && r->connection->data == r) {
         r->connection->data = NULL;
+        r->connection->pool = NULL;  /* pool 已自行销毁，防止外层 free_connection 二次释放 */
     }
-    if (r->pool) {
-        rps_destroy_pool(r->pool);
+
+    if (pool) {
+        rps_destroy_pool(pool);
     }
 }
 
@@ -123,18 +135,24 @@ rps_int_t rps_http_parse_request_line(rps_http_request_t *r){
     rps_str_t                arg;
     u_char                  *pos;
     char                     c;
-    
+    rps_uint_t               num_space = 0;
     
     body = r -> request_body;
     pos = body -> pos;
     status = 0;
 
-    /*找\n 判断是不是一个完整的起始行 */
+    /*找\n 判断是不是一个完整的起始行,以及判断一下是不是两个空格 */
     for (; pos < body -> last; pos ++){
         if (*pos == '\r'){
             if (pos[1] == '\n')
             break;
             else return RPS_HTTP_PARSE_ERROR;
+        }
+        if (*pos == ' '){
+            num_space ++;
+            if (num_space == 3){
+                return RPS_HTTP_PARSE_ERROR;
+            }
         }
     }
     if (pos == body -> last){

@@ -82,6 +82,7 @@ typedef struct{
 
 typedef struct rps_http_request_s {
     rps_connection_t       *connection;          /* 客户端连接 */
+    rps_cycle_t            *cycle;
 
     /* 请求行 */
     rps_str_t               method;              /* GET / POST / ... */
