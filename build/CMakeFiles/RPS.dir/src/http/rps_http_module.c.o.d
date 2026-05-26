@@ -100,4 +100,8 @@ CMakeFiles/RPS.dir/src/http/rps_http_module.c.o: \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
  /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h \
  /home/jack/RPS/src/core/rps_core.h /home/jack/RPS/src/core/rps_rbtree.h \
- /home/jack/RPS/src/core/rps_core_module.h
+ /home/jack/RPS/src/core/rps_core_module.h \
+ /home/jack/RPS/src/http/modules/rps_http_core_module.h \
+ /home/jack/RPS/src/core/rps_array.h \
+ /home/jack/RPS/src/http/rps_http_phases.h \
+ /home/jack/RPS/src/http/rps_http_core.h

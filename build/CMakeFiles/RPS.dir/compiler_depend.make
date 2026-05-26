@@ -2137,7 +2137,9 @@ CMakeFiles/RPS.dir/src/http/rps_http_module.c.o: /home/jack/RPS/src/http/rps_htt
   /home/jack/RPS/src/core/rps_rbtree.h \
   /home/jack/RPS/src/core/rps_string.h \
   /home/jack/RPS/src/event/rps_event.h \
+  /home/jack/RPS/src/http/modules/rps_http_core_module.h \
   /home/jack/RPS/src/http/rps_http_core.h \
+  /home/jack/RPS/src/http/rps_http_phases.h \
   /usr/include/alloca.h \
   /usr/include/asm-generic/bitsperlong.h \
   /usr/include/asm-generic/errno-base.h \
