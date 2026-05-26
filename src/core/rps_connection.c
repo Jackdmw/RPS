@@ -15,7 +15,12 @@ rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
 
     for(i = 0;i < n; i++){
         listen_array[i].fd = socket(AF_INET,listen_array[i].type,0);
-        
+        int opt = 1;
+        // 在 bind 之前设置 SO_REUSEADDR
+        if (setsockopt(listen_array[i].fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+            perror("setsockopt SO_REUSEADDR failed");
+            exit(EXIT_FAILURE);
+        }
     
 
         bind(listen_array[i].fd, &listen_array[i].sockaddr, listen_array[i].socklen);

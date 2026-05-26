@@ -17,7 +17,7 @@
 
 rps_http_request_t *rps_http_create_request(rps_connection_t *c){
     rps_http_request_t          *request;
-    request = rps_palloc(c -> pool, sizeof(rps_http_request_t));
+    request = rps_pcalloc(c -> pool, sizeof(rps_http_request_t));
     if (request == NULL){
         return NULL;
     }
@@ -141,8 +141,8 @@ rps_int_t rps_http_parse_request_line(rps_http_request_t *r){
         return RPS_HTTP_PARSE_EAGIN;
     }
     
-    for (arg.data = body -> pos; body -> pos < pos; body -> pos ++){
-        if (*body -> pos == ' '){
+    for (arg.data = body -> pos; body -> pos <= pos; body -> pos ++){
+        if (*body -> pos == ' ' || body -> pos == pos){
             arg.len = (rps_uint_t)body -> pos - (rps_uint_t)arg.data;
             status ++;
             if (status == 1){

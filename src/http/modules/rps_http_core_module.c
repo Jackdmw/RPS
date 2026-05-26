@@ -509,10 +509,6 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
         }
     }
 
-    /* 初始化阶段引擎 */
-    if (rps_http_init_phase_engine(cmcf) != RPS_OK) {
-        return RPS_ERROR;
-    }
 
     return RPS_OK;
 }

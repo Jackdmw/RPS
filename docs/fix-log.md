@@ -120,16 +120,15 @@
 
 **问题**：`rps_http_finalize_request` 无条件销毁 pool 关闭连接。
 
-**修复**：keepalive 路径下：
-- 重置 `request_body` buffer 指针
-- 清零 parse_status、phase、phase_index、headers 等关键字段
-- 不销毁 pool，由调用方重新注册读事件
+**修复（第一版）**：keepalive 路径下原地重置 buffer、parse_status、headers 等字段，不销毁 pool，由调用方重新注册读事件。
+
+**修正**：原地重置无法释放 pool 中已分配的 header 链表等内存，多轮 keepalive 导致 pool 无限膨胀。最终改为 keepalive 分支仅 `return`，不做任何清理，由 `done:` 标签统一销毁 pool 并重建 request（见条目 19）。
 
 ### 15. Keepalive 重新注册读事件 → `src/core/rps.c`
 
 **问题**：finalize 之后没有重新监听读事件。
 
-**修复**：在 `rps_http_wait_request_handler` 末尾增加 `done` 标签，检查 `!c->close` 时重新 `add_event(READ)`。
+**修复**：在 `rps_http_wait_request_handler` 末尾增加 `done` 标签，检查 `!c->close` 时重新 `add_event(READ)`。keepalive 路径下销毁旧 request/pool → 重建 pool → 新建 request → 注册读事件。
 
 ---
 
@@ -153,13 +152,55 @@
 
 ### 18. POST/PUT 请求体不读取 → `src/core/rps.c`
 
-**问题**：解析完 header 后直接进入阶段引擎，`request_body_rest` / `reading_body` 字段存在但从未被使用。
+**问题**：解析完 header 后直接进入阶段引擎，body 数据被忽略。
 
-**修复**：在 `rps_http_wait_request_handler` 中 `parse_status == 2` 分支，检查 `content_length_n > 0`，计算还需读取的字节数。如果 buffer 中数据不够，设置 `reading_body = 1` 和 `request_body_rest`，返回等待下一次读事件。body 全部读完后才进入阶段引擎。
+**修复（第一版）**：引入 `reading_body` 标志 + `request_body_rest` 计数器，在 `parse_status == 2` 分支检查 body 是否完整，不够则返回等待下次 `recv`。body 读完后再进入阶段引擎。
+
+**修正（见条目 20）**：`reading_body` 分支中的 `b->pos = b->last` 破坏了 header 结束位置，导致死循环。
 
 ---
 
-## 九、未解决 / 已知限制
+## 九、请求体读取修正 & Keepalive 修正 & PID/信号完善（同日第二次修复）
+
+### 19. Keepalive 不复用旧 request → `src/core/rps.c` + `src/http/rps_http_response.c`
+
+**问题**：`done:` 标签中 keepalive 直接复用旧 request（`rps_http_finalize_request` 原地重置字段），但 pool 中已分配的 header 链表等内存无法释放，多轮 keepalive 导致 pool 无限膨胀。
+
+**修复**：
+- `rps_http_finalize_request`：keepalive 分支删掉所有原地重置代码，仅 `return`（交由调用者处理）
+- `rps_http_wait_request_handler` 的 `done:` 标签：keepalive 时 `rps_http_close_request(r)` 销毁旧 pool，然后 `rps_create_pool` + `rps_http_create_request` 全新重建
+
+### 20. 请求体读取死循环 → `src/core/rps.c`
+
+**问题**：`reading_body` 分支在 body 未读完时执行 `b->pos = b->last`，导致 `b->pos`（header 末尾）被推进到 body 中间。body 读完后 fall through 到 `parse_status == 2`，用错误的 `b->pos` 重新计算 `hdr_end`，`have < total` 永远为真，再次设置 `reading_body = 1` 但客户端不会再发数据 → 死循环/连接挂死。
+
+**修复**：彻底删除 `reading_body` 分支。`parse_status == 2` 中 body 不够时直接 `return`，不修改 `b->pos`。下次 `recv` 新数据后 `b->pos` 仍在 header 末尾，`hdr_end` 计算始终正确。
+
+### 21. PID 文件完善 → `src/core/rps.c`
+
+**问题**：PID 文件打开无 `O_CREAT`（文件不存在会失败），无文件锁（无法防多实例），无 `ftruncate`（旧内容残留），退出时不清理。
+
+**修复**：
+- `open` 加上 `O_CREAT | O_TRUNC` 和权限 `0644`
+- `fcntl(F_SETLK)` 对整个文件加写锁，锁失败打印 "another instance running?" 并退出
+- `ftruncate` + 写入 `"<pid>\n"`，全程错误处理
+- master 退出时 `unlink` 清理 PID 文件
+
+### 22. 信号机制完善 → `src/core/rps.c`
+
+**问题**：
+- 不支持 `SIGTERM`（`kill` 默认信号），daemon 模式无法正常停止
+- master 收到信号后只向 worker 转发，不等待退出，不清理资源
+- worker 卡死时 master 永远不退出
+
+**修复**：
+- 新增 `SIGTERM`：全局标志 `rps_term`、handler 分支、master 注册+阻塞、worker 注册+事件循环检查
+- master 关闭流程改为三步：①向所有 worker 转发信号 ②轮询 `waitpid(WNOHANG)` 最多 3 秒 ③超时 worker 发 `SIGKILL` 强杀并打 WARN 日志
+- master 退出前 `unlink` PID 文件
+
+---
+
+## 十、未解决 / 已知限制
 
 以下问题已在代码中标记为 TODO，需要后续版本解决：
 
@@ -172,5 +213,3 @@
 4. **响应解析**：当前直接把后端原始响应转发给客户端，不解析后端状态行和响应头。
 
 5. **定时器实现**：`rps_event_find_timer` / `rps_event_expire_timers` 仍为空壳。
-
-6. **pid 文件操作**：`rps_master_process_cycle` 中打开 pid 文件但没有错误处理和 truncate。

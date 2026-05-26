@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <time.h>
 
 typedef struct
 {
@@ -23,7 +24,7 @@ typedef struct
 static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli);
 static int rps_daemon();
 static void rps_master_process_cycle(rps_cycle_t *cycle);
-static void rps_worker_process_init(rps_cycle_t * cycle);
+static rps_int_t rps_worker_process_init(rps_cycle_t * cycle);
 static void rps_worker_process_cycle(rps_cycle_t *cylce);
 
 /* 事件驱动相关 */
@@ -139,12 +140,16 @@ static  int rps_daemon(){
 volatile    sig_atomic_t          rps_reap = 0;         //SIGCHLD   master
 volatile    sig_atomic_t          rps_quit = 0;         //SIGQUIT   worker/master
 volatile    sig_atomic_t          rps_terminate = 0;    //SIGINT    worker/master
+volatile    sig_atomic_t          rps_term = 0;         //SIGTERM   worker/master
 
 void sig_handler(int sig){
     switch (sig)
     {
     case SIGINT:
         rps_terminate = 1;
+        break;
+    case SIGTERM:
+        rps_term = 1;
         break;
     case SIGQUIT:
         rps_quit = 1;
@@ -162,11 +167,13 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
     rps_uint_t               i;
     rps_file_t               pid_f;
     pid_t                    pid;
-    u_char                   buf[1024];
     struct sigaction         sa;
     sigset_t                 mask, oldmask, waitmask;
     pid_t                   *pids;
     
+    rps_log_error(RPS_LOG_INFO, cycle -> log, 0, "start master process");
+
+
     memset(&sa,0,sizeof(sa));
     sigemptyset(&sa.sa_mask);
     sa.sa_handler = sig_handler;
@@ -180,6 +187,10 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
         perror("sigaction SIGQUIT failed:");
         return;
     }
+    if (sigaction(SIGTERM,&sa,NULL) == -1){
+        perror("sigaction SIGTERM failed:");
+        return;
+    }
     if (sigaction(SIGCHLD,&sa,NULL) == -1){
         perror("sigaction SIGCHLD failed");
         return;
@@ -188,6 +199,7 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
     sigemptyset(&mask);
     sigaddset(&mask,SIGINT);
     sigaddset(&mask,SIGQUIT);
+    sigaddset(&mask,SIGTERM);
     sigemptyset(&waitmask);
 
     sigprocmask(SIG_BLOCK, &mask, &oldmask);
@@ -208,11 +220,43 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
         return;
     }
     /**
-     * todo: pid 文件相关操作需要完善
+     * PID 文件：创建、加锁（防多实例）、写入 pid
      */
-    pid_f.fd = open(ccf -> pid.data,O_RDWR);
-    sprintf(buf,"%d",getpid());
-    write(pid_f.fd,buf,strlen(buf));
+    {
+        int            pid_len;
+        char           pid_buf[64];
+
+        pid_f.fd = open((const char *)ccf->pid.data,
+                        O_CREAT | O_TRUNC | O_RDWR, 0644);
+        if (pid_f.fd == -1) {
+            rps_log_error(RPS_LOG_EMERG, cycle->log, errno,
+                          "failed to open pid file \"%s\"", ccf->pid.data);
+            return;
+        }
+        {
+            struct flock fl;
+            memset(&fl, 0, sizeof(fl));
+            fl.l_type   = F_WRLCK;
+            fl.l_whence = SEEK_SET;
+            fl.l_start  = 0;
+            fl.l_len    = 0; /* 锁整个文件 */
+            if (fcntl(pid_f.fd, F_SETLK, &fl) == -1) {
+                rps_log_error(RPS_LOG_EMERG, cycle->log, errno,
+                              "failed to lock pid file \"%s\" "
+                              "(another instance running?)", ccf->pid.data);
+                close(pid_f.fd);
+                return;
+            }
+        }
+        pid_len = snprintf(pid_buf, sizeof(pid_buf), "%d\n", getpid());
+        if (ftruncate(pid_f.fd, 0) == -1
+            || write(pid_f.fd, pid_buf, pid_len) != pid_len)
+        {
+            rps_log_error(RPS_LOG_EMERG, cycle->log, errno,
+                          "failed to write pid file");
+            return;
+        }
+    }
 
     pids = rps_palloc(cycle -> pool, sizeof(pid_t) * ccf -> worker_processes);
     
@@ -223,42 +267,129 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
             return;
         }
         if(pid == 0){
+            rps_log_error(RPS_LOG_INFO , cycle -> log, 0, "worker process has been created,[WORKER PID]: %d", getpid());
             rps_worker_process_cycle(cycle);
             break;
         }
         pids[i] = pid;
      }
 
-     while(1){
-         sigsuspend(&waitmask);
-        if(rps_reap == 1){
-            int status;
-            rps_reap = 0;
-            while(waitpid(-1,&status,WNOHANG)!=0);
-        }
-        if (rps_quit == 1){
-            for (i = 0; i < ccf -> worker_processes; i++){
-                kill(pids[i], SIGQUIT);
-            }
+     {
+         rps_int_t shutdown    = 0;
+         rps_int_t shutdown_sig = 0;
+         rps_uint_t j;
 
-        }
-        if (rps_terminate == 1){
-            for (i = 0; i< ccf -> worker_processes; i++){
-                kill(pids[i], SIGINT);
-            }
-        }
+         while (!shutdown) {
+             sigsuspend(&waitmask);
+
+             /* 收割已退出的子进程 */
+             if (rps_reap) {
+                 rps_reap = 0;
+                 int   status;
+                 pid_t wpid;
+                 while ((wpid = waitpid(-1, &status, WNOHANG)) > 0) {
+                    if (WIFEXITED(status)) {
+                        int exit_code = WEXITSTATUS(status);
+                        rps_log_error( RPS_LOG_INFO, cycle -> log, 0, "Worker %d exit normally, exit code: %d", wpid, exit_code);
+                    } 
+                    else if (WIFSIGNALED(status)) {
+                        int signal_num = WTERMSIG(status);
+                        rps_log_error(RPS_LOG_ERR, cycle -> log, 0, "ERROR:Worker %d killed by %d ", wpid, signal_num);
+                    }
+                    for (j = 0; j < ccf->worker_processes; j++) {
+                        if (pids[j] == wpid) {
+                             pids[j] = 0;
+                        }
+                    }
+                 }
+             }
+
+             if (rps_terminate) {
+                 rps_terminate = 0;
+                 shutdown      = 1;
+                 shutdown_sig  = SIGINT;
+             }
+             if (rps_quit) {
+                 rps_quit   = 0;
+                 shutdown    = 1;
+                 shutdown_sig = SIGQUIT;
+             }
+             if (rps_term) {
+                 rps_term    = 0;
+                 shutdown    = 1;
+                 shutdown_sig = SIGTERM;
+             }
+         }
+
+         if (shutdown && shutdown_sig) {
+             rps_int_t living = 0;
+
+             for (j = 0; j < ccf->worker_processes; j++) {
+                 if (pids[j] > 0) {
+                     kill(pids[j], shutdown_sig);
+                     living++;
+                 }
+             }
+
+             if (living > 0) {
+                 rps_int_t retries = 30; /* 30 * 100ms = 3s */
+                 while (retries-- > 0) {
+                     rps_int_t all_dead = 1;
+                     for (j = 0; j < ccf->worker_processes; j++) {
+                         if (pids[j] > 0) {
+                             pid_t w = waitpid(pids[j], NULL, WNOHANG);
+                             if (w > 0) {
+                                 pids[j] = 0;
+                             } else {
+                                 all_dead = 0;
+                             }
+                         }
+                     }
+                     if (all_dead) {
+                         break;
+                     }
+                     {
+                        struct timespec ts = { .tv_sec = 0, .tv_nsec = 100000000 };
+                        nanosleep(&ts, NULL);
+                    }
+                 }
+
+                 for (j = 0; j < ccf->worker_processes; j++) {
+                     if (pids[j] > 0) {
+                         rps_log_error(RPS_LOG_WARN, cycle->log, 0,
+                                       "worker %d still alive, sending SIGKILL",
+                                       (int)pids[j]);
+                         kill(pids[j], SIGKILL);
+                         waitpid(pids[j], NULL, 0);
+                         pids[j] = 0;
+                     }
+                 }
+             }
+         }
+
+         /* 清理 PID 文件 */
+         if (ccf->pid.data) {
+             unlink((const char *)ccf->pid.data);
+         }
      }
 }
-static void rps_worker_process_init(rps_cycle_t * cycle){
+static rps_int_t rps_worker_process_init(rps_cycle_t * cycle){
     rps_module_t       **modules;
     rps_int_t            i;
+    rps_int_t            rc;
 
     modules = cycle -> modules;
     for( i = 0; i < cycle -> modules_n; i++){
         if (modules[i]->init_process != NULL){
-            modules[i]->init_process(cycle);
+            rps_log_error(RPS_LOG_DEBUG, cycle -> log, 0, "module %s prepare to  execute its init_process function in worker [PID]: %d", modules[i]->name.data, getpid());
+            rc = modules[i]->init_process(cycle);
+            if (rc == RPS_ERROR){
+                rps_log_error(RPS_LOG_ERR, cycle -> log, 0, "module %s FAILEd to execute its init_process function in worker [PID]: %d", modules[i]->name.data, getpid());
+                return RPS_ERROR;
+            }
         }
     }
+    return RPS_OK;
     
 }
 static void rps_worker_process_cycle(rps_cycle_t * cycle){
@@ -268,10 +399,12 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     rps_event_module_t         *engine;
     rps_msec_t                  timer;
     rps_uint_t                  i;
-
+    rps_int_t                   rc;
+    
     rps_cycle = cycle;
-    rps_worker_process_init(cycle);
-
+    if (rps_worker_process_init(cycle) == RPS_ERROR){
+        return ;
+    }
     /*
      * 注册 worker 进程信号处理
      */
@@ -284,6 +417,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
 
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
 
     /*
      * 线程阻塞模式（if_pthread == 1）：简单 accept + 每连接一线程，
@@ -357,7 +491,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
 
     /* 主事件循环 */
     for (;;) {
-        if (rps_terminate || rps_quit) {
+        if (rps_terminate || rps_quit || rps_term) {
             break;
         }
 
@@ -458,7 +592,7 @@ rps_http_wait_request_handler(rps_event_t *ev)
         return;
     }
     b->last += n;
-
+    printf ("accept from link: \n %s", b -> pos);
     /* 状态机：按 parse_status 依次调用解析 */
     for (;;) {
         if (r->parse_status == 0) {
@@ -471,7 +605,6 @@ rps_http_wait_request_handler(rps_event_t *ev)
                 goto done;
             }
         }
-
         if (r->parse_status == 1) {
             rc = rps_http_parse_headers(r);
             if (rc == RPS_HTTP_PARSE_EAGIN) {
@@ -482,7 +615,9 @@ rps_http_wait_request_handler(rps_event_t *ev)
                 goto done;
             }
         }
-
+        printf ("headers:\n1. content-length: %lu\n2. content-type: %s\n3. connection:%s\n4. host:%s ", r -> headers_in.content_length_n, 
+            r -> headers_in.content_type.value.data, r -> headers_in.connection.value.data, r -> headers_in.host.value.data);
+        
         if (r->parse_status == 2) {
             /* 如果请求有 body（Content-Length > 0），检查是否读完 */
             if (r->headers_in.content_length_n > 0) {

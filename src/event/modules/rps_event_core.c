@@ -67,6 +67,7 @@ char * rps_set_use(rps_conf_t *cf,rps_command_t *cmd,void* conf){
 
     if(rps_strcmp_with_cstr(values[1],"epoll")){
         ccf -> use = (rps_str_t)rps_string("epoll");
+        cf -> cycle -> if_pthread = 0;
     }
     else if (rps_strcmp_with_cstr(values[1],"io_uring")){
         ccf -> use = (rps_str_t)rps_string("io_uring");
@@ -81,7 +82,9 @@ char * rps_set_use(rps_conf_t *cf,rps_command_t *cmd,void* conf){
     }
     return RPS_CONF_OK;
 }
-
+/**
+ * 初始化全局连接池，以及配套的读写事件池
+ */
 rps_int_t  rps_event_core_init_process(rps_cycle_t *cycle){
     rps_int_t                i;
     rps_module_t           **modules;
@@ -91,7 +94,7 @@ rps_int_t  rps_event_core_init_process(rps_cycle_t *cycle){
 
     modules = cycle -> modules;
     
-    container = rps_get_conf(cycle -> conf_ctx,rps_event_core_module);
+    container = rps_get_conf(cycle -> conf_ctx,rps_event_module);
     
     conf = container -> event_conf[rps_event_core_module.ctx_index];
 

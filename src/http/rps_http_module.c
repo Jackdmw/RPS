@@ -1,6 +1,7 @@
 #include "rps_http_core.h"
 #include "core/rps_core.h"
 #include "core/rps_core_module.h"
+#include "http/modules/rps_http_core_module.h"
 
 static void *rps_http_module_create_conf(rps_cycle_t * cycle);
 char *rps_set_http_block(rps_conf_t *cf,rps_command_t * cmd,void *conf);
@@ -67,6 +68,7 @@ char *rps_set_http_block(rps_conf_t *cf,rps_command_t * cmd,void *conf){
     rps_cycle_t                     *cycle;
     rps_module_t                   **modules;
     rps_http_module_t               *ctx;
+    rps_http_core_main_conf_t       *cmcf;
 
     old_cf = *cf;
     container = conf;
@@ -124,7 +126,12 @@ char *rps_set_http_block(rps_conf_t *cf,rps_command_t * cmd,void *conf){
             }
         }
     }
-
+    cmcf = container -> main_conf[rps_http_core_module.ctx_index];
+    rps_log_error(RPS_LOG_INFO, cycle -> log, 0, "prepare to init phases engine");
+        /* 初始化阶段引擎 */
+    if (rps_http_init_phase_engine(cmcf) != RPS_OK) {
+        return "phase_engine_init_failed!";
+    }
     *cf = old_cf;
     return RPS_CONF_OK;
 }
