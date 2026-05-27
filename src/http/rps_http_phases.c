@@ -3,6 +3,7 @@
 #include "http/modules/rps_http_core_module.h"
 #include "core/rps_module.h"
 #include "core/rps_palloc.h"
+#include "core/rps_buf.h"
 
 /*
  *  约定：
@@ -120,7 +121,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
             break;
         }
 
-        if (rps_strcmp(host, srv->server_name)) {
+        if (rps_strcmp(host, srv->server_name) == RPS_STRING_EQUAL) {
             r->srv_conf = srv_container->srv_conf;
             break;
         }
@@ -136,7 +137,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
     /*匹配 location*/
     if (srv != NULL) {
         locations = srv->locations.elts;
-
+        rps_uint_t      max_match_len = 0;
         for (j = 0; j < srv->locations.nelts; j++) {
             loc = locations[j];
             if (loc == NULL) {
@@ -148,7 +149,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
             }
 
             /*
-             * 简单前缀匹配：location pattern 是 /api/ 则 URI 以 /api/ 开头就算匹配
+             * 最长前缀匹配
              */
             rps_http_core_loc_conf_t *lcf;
             lcf = loc->loc_conf[rps_http_core_module.ctx_index];
@@ -158,10 +159,12 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
             }
 
             if (r->uri.len >= lcf->pattern.len
-                && memcmp(r->uri.data, lcf->pattern.data, lcf->pattern.len) == 0)
+                && rps_strcmp(r -> uri, lcf -> pattern) == RPS_STRING_EQUAL)
             {
-                r->loc_conf = loc->loc_conf;
-                break;
+                if (max_match_len < lcf -> pattern.len){
+                    max_match_len = lcf -> pattern.len;
+                    r -> loc_conf = loc -> loc_conf;
+                }
             }
         }
 
@@ -170,6 +173,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
             loc          = ((rps_http_conf_container_t **)srv->locations.elts)[0];
             r->loc_conf  = loc->loc_conf;
         }
+        
     }
 
     r->phase_index = ph->next;
@@ -249,7 +253,13 @@ rps_http_core_post_access_phase(rps_http_request_t *r,
     return RPS_AGAIN;
 }
 
-/*content: 生成响应内容（只执行一个 handler*/
+/*
+ * content phase checker：遍历注册的 content handler。
+ * 若所有 handler 均返回 DECLINED，checker 自身兜底发送默认响应。
+ *
+ * 所有 content handler 的 ph->next 指向同一个位置（LOG 或 sentinel），
+ * 因此判断 phase_index >= ph->next 即表示本阶段已耗尽。
+ */
 static rps_int_t
 rps_http_core_content_phase(rps_http_request_t *r,
                             rps_http_phase_handler_t *ph)
@@ -260,6 +270,21 @@ rps_http_core_content_phase(rps_http_request_t *r,
 
     if (rc == RPS_DECLINED) {
         r->phase_index++;
+        if (r->phase_index >= ph->next) {
+            /* 兜底：没有 content handler 处理此请求 */
+            rps_buf_t *body;
+
+            rps_http_send_header(r);
+
+            body = rps_buf_create(r->pool, 256);
+            if (body != NULL) {
+                body->last = rps_cpymem(body->last, "Hello from RPS!\n", 16);
+                rps_http_send_body(r, body);
+            }
+
+            rps_http_finalize_request(r, RPS_OK);
+            return RPS_OK;
+        }
         return RPS_AGAIN;
     }
 

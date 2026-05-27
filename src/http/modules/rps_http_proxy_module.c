@@ -252,7 +252,7 @@ rps_conf_set_proxy_pass(rps_conf_t *cf, rps_command_t *cmd, void *conf)
     start = p;
 
     /* 扫描找 host 结束位置（':' 或 '/' 或 结束） */
-    while (p < url.data + url.len && *p != ':' && *p != '/' && *p != '\0') {
+    while (p < url.data + url.len && *p != ':' && *p != '/') {
         p++;
     }
     plcf->upstream_host.data = start;

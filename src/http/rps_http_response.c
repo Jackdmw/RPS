@@ -100,7 +100,6 @@ rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out)
             return RPS_AGAIN;
         }
     }
-    printf("OK\n");
     return RPS_OK;
 }
 

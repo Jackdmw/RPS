@@ -102,4 +102,4 @@ CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o: \
  /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h \
  /home/jack/RPS/src/http/modules/rps_http_core_module.h \
  /home/jack/RPS/src/core/rps_module.h \
- /home/jack/RPS/src/core/rps_palloc.h
+ /home/jack/RPS/src/core/rps_palloc.h /home/jack/RPS/src/core/rps_buf.h

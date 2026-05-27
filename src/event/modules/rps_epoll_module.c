@@ -114,9 +114,9 @@ rps_epoll_add_event(rps_event_t *ev, rps_uint_t event)
     rps_connection_t       *c;
 
     c = ev->data;
-    ee.events = EPOLLEXCLUSIVE;
 
     memset(&ee, 0, sizeof(ee));
+    ee.events = 0;
 
     if (event & RPS_READ_EVENT) {
         ee.events |= EPOLLIN;

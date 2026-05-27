@@ -45,7 +45,7 @@ void * rps_palloc(rps_pool_t *pool, size_t size){
                     return NULL;
                 }
             }
-            if(p->d.failed > 4){
+            if(p->d.failed > 4 && p->d.next != NULL){
                 pool->current = p->d.next;
             }
             p = p->d.next;

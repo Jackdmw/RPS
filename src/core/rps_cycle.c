@@ -48,7 +48,7 @@ rps_init_cycle(rps_cycle_t *old_cycle){
     }
 
     cycle->conf_ctx = rps_pcalloc(pool, sizeof(void *) * rps_max_module);
-    if (cycle->conf_ctx == NULL) {
+    if (cycle->conf_ctx == NULL) { 
         rps_destroy_pool(pool);
         return NULL;
     }

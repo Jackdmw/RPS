@@ -1,3 +1,4 @@
+#define _GNU_SOURCE     /*打开SO_REUSEPORT 宏*/
 #include "rps_connection.h"
 #include "rps_cycle.h"
 #include "rps_config.h"
@@ -16,12 +17,15 @@ rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
     for(i = 0;i < n; i++){
         listen_array[i].fd = socket(AF_INET,listen_array[i].type,0);
         int opt = 1;
-        // 在 bind 之前设置 SO_REUSEADDR
+        // 在 bind 之前设置 SO_REUSEADDR以及SO_REUSEPORT
         if (setsockopt(listen_array[i].fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
             perror("setsockopt SO_REUSEADDR failed");
             exit(EXIT_FAILURE);
         }
-    
+        if (setsockopt(listen_array[i].fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
+            perror("setsockopt SO_REUSEPORT failed");
+            exit(EXIT_FAILURE);
+        }
 
         bind(listen_array[i].fd, &listen_array[i].sockaddr, listen_array[i].socklen);
         listen(listen_array[i].fd, listen_array[i].backlog);
@@ -30,6 +34,11 @@ rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
     }
     return RPS_OK;
 }
+#ifdef _THROWN
+/**
+ * 这个函数应该废弃，现在的实现中，listensocket是交给connection对象了的
+ * 释放交给connection对象去做
+ */
 void rps_close_listening_sockets(rps_cycle_t *cycle){
     rps_listening_t             *listen_array;
     rps_uint_t                   n;
@@ -45,6 +54,12 @@ void rps_close_listening_sockets(rps_cycle_t *cycle){
         }
     }
 }
+#endif
+/**
+ *  从全局周期中拿一个连接对象，连接对象的sockaddr是分配了内存的
+ *  read 和 write 事件是按照数组下标的形式，在最开始创建的时候就是一一对应了的
+ *  如果要释放，务必一起释放。
+ */
 rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_listening_t *listening){
     rps_connection_t        *new_conn;
     if(cycle -> free_connection == NULL){
@@ -61,14 +76,6 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         new_conn -> pool = rps_create_pool(1024);
         if(new_conn -> pool == NULL){
             return NULL;
-        }
-
-        /* 读写事件指向连接自身 */
-        if (new_conn->read) {
-            new_conn->read->data = new_conn;
-        }
-        if (new_conn->write) {
-            new_conn->write->data = new_conn;
         }
 
         return new_conn;

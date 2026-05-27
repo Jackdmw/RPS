@@ -38,10 +38,11 @@ static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
 
         rps_uint_t  i;
         for( i = 1; i < argc; i++){
-            
+
             if(strcmp(argv[i],"-c")==0){
                 if(argc == i + 1){
                     rps_log_error(RPS_LOG_ERR,log,0,"configuration file's path is need behind arguments \"-c\"");
+                    return -1;
                 }
                 rps_set_str((&(cli->conf_file)),argv[i+1]);
                 i++;
@@ -51,6 +52,7 @@ static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
                 return -1;
             }
         }
+        return 0;
 }
 
 int main(int argc,char **argv){
@@ -107,17 +109,17 @@ int main(int argc,char **argv){
     
     rps_http_conf_container_t     *http_root_container = cycle ->conf_ctx[rps_http_module.index];
     rps_http_core_main_conf_t     *hcmcf = http_root_container->main_conf[rps_http_core_module.ctx_index];
-    rps_http_conf_container_t     *http_srv_container = *(void**)hcmcf -> servers.elts;
+    rps_http_conf_container_t     *http_srv_container = ((void**)hcmcf -> servers.elts)[0];
     rps_http_core_srv_conf_t      *hcscf = http_srv_container -> srv_conf[rps_http_core_module.ctx_index];
-    rps_http_conf_container_t     *http_loc_container = *(void**)hcscf -> locations.elts;
+    rps_http_conf_container_t     *http_loc_container = ((void**)hcscf -> locations.elts)[1];
     rps_http_core_loc_conf_t      *hclcf = http_loc_container -> loc_conf[rps_http_core_module.ctx_index];
     rps_http_proxy_loc_conf_t     *plcf = http_loc_container -> loc_conf[rps_http_proxy_module.ctx_index];
 
     printf("proxy_host: %s\nproxy_port: %lu\nproxy_uri: %s\n", plcf->upstream_host.data,plcf->upstream_port, plcf->upstream_uri.data);
-
+    printf ("location pattern is %s", hclcf -> pattern.data);
 
     rps_master_process_cycle(cycle);
-}
+} 
 static  int rps_daemon(){
     pid_t pid;
     pid = fork();
@@ -503,7 +505,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     /* 主事件循环 */
     for (;;) {
         if (rps_terminate || rps_quit || rps_term) {
-            break;
+            return;
         }
 
         timer = rps_event_find_timer();
@@ -561,11 +563,14 @@ rps_event_accept(rps_event_t *ev)
         return;
     }
     new_c->data = r;
-
+    rps_log_error(RPS_LOG_INFO, rps_cycle -> log, 0, "accept new connection");
     new_c->read->handler = rps_http_wait_request_handler;
-    new_c->read->data    = new_c;
 
-    rps_cycle->event_engine->add_event(new_c->read, RPS_READ_EVENT);
+    if (rps_cycle->event_engine->add_event(new_c->read, RPS_READ_EVENT) != RPS_OK) {
+        rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
+                      "failed to add read event to epoll");
+        rps_free_connection(new_c);
+    }
 }
 
 
@@ -626,8 +631,9 @@ rps_http_wait_request_handler(rps_event_t *ev)
                 goto done;
             }
         }
-        printf ("headers:\n1. content-length: %lu\n2. content-type: %s\n3. connection:%s\n4. host:%s ", r -> headers_in.content_length_n, 
-            r -> headers_in.content_type.value.data, r -> headers_in.connection.value.data, r -> headers_in.host.value.data);
+        printf ("startline:\n 1. method: %s\n 2. uri: %s\n 3. httpversion: %s", r -> method.data, r -> uri.data, r -> http_version.data);
+        printf ("headers:\n1. content-length: %lu\n2. content-type: %s\n3. connection:%s\n4. host:%s\n5. user-agent:%s\n ", r -> headers_in.content_length_n, 
+            r -> headers_in.content_type.value.data, r -> headers_in.connection.value.data, r -> headers_in.host.value.data, r -> headers_in.user_agent.value.data);
         
         if (r->parse_status == 2) {
             /* 如果请求有 body（Content-Length > 0），检查是否读完 */
@@ -683,7 +689,11 @@ done:
         }
         c->read->handler = rps_http_wait_request_handler;
         c->read->data    = c;
-        rps_cycle->event_engine->add_event(c->read, RPS_READ_EVENT);
+        if (rps_cycle->event_engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
+            rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
+                          "failed to re-add read event for keepalive");
+            rps_free_connection(c);
+        }
     } else if (c && c->close) {
         /* 非 keepalive / 错误：归还连接到空闲池 */
         rps_free_connection(c);

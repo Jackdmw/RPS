@@ -22,7 +22,6 @@ char *rps_http_core_merge_srv_conf(rps_pool_t *pool, void *parent, void *child);
 char *rps_http_core_merge_loc_conf(rps_pool_t *pool, void *parent, void *child);
 
 static rps_int_t rps_http_core_postconfiguration(rps_conf_t *cf);
-static rps_int_t rps_http_core_default_handler(rps_http_request_t *r);
 static rps_int_t rps_http_core_find_config_handler(rps_http_request_t *r);
 static rps_int_t rps_http_core_placeholder_handler(rps_http_request_t *r);
 
@@ -400,14 +399,6 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
                                      cmcf);
 
     /*
-     * 注册默认 content handler 作为兜底
-     * 当 proxy_pass / static 等模块没有匹配时，返回 "Hello from RPS!"
-     */
-    rps_http_register_phase_handler(RPS_HTTP_CONTENT_PHASE,
-                                     rps_http_core_default_handler,
-                                     cmcf);
-
-    /*
      * 遍历所有 server {} 块，为每个 listen 指令创建 listening 项。
      *
      * 当前只支持 "listen <port>;"（地址固定为 INADDR_ANY），
@@ -526,28 +517,6 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
 
 
     return RPS_OK;
-}
-
-/*
- * 默认 content handler：当没有其他 content handler 匹配时，
- * 返回 "Hello from RPS!\n" 作为兜底响应。
- */
-static rps_int_t
-rps_http_core_default_handler(rps_http_request_t *r)
-{
-    rps_buf_t *body;
-    if (rps_http_send_header(r) != RPS_OK) {
-        return RPS_ERROR;
-    }
-
-    body = rps_buf_create(r->pool, 256);
-    if (body == NULL) {
-        return RPS_ERROR;
-    }
-
-    body->last = rps_cpymem(body->last, "Hello from RPS!\n", 16);
-
-    return rps_http_send_body(r, body);
 }
 
 /*

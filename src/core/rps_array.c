@@ -29,6 +29,7 @@ rps_array_t *rps_array_create(rps_pool_t *pool, rps_uint_t n, size_t size){
     array -> pool  = pool;
     array -> nalloc = n ;
 
+    return array;
 }
 
 /**
