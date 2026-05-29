@@ -73,6 +73,8 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         new_conn ->sent = 0;
         new_conn -> listenling = listening;
 
+        rps_memzero(&new_conn->addr_text, sizeof(rps_str_t));
+
         new_conn -> pool = rps_create_pool(1024);
         if(new_conn -> pool == NULL){
             return NULL;
@@ -102,6 +104,9 @@ void rps_close_connection(rps_connection_t *c){
         rps_destroy_pool(c -> pool);
         c -> pool = NULL;
     }
+    /* 清空远端地址，连接回收到空闲链表时不会残留旧数据 */
+    rps_memzero(&c->sockaddr, sizeof(struct sockaddr));
+    rps_memzero(&c->addr_text, sizeof(rps_str_t));
 }
 
 rps_int_t

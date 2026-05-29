@@ -82,6 +82,11 @@ typedef struct rps_conf_file_s rps_conf_file_t;
         conf = default;                         \
     }
 
+#define rps_conf_init_msec_value(conf, default)  \
+    if (conf == RPS_CONF_UNSET_MSEC) {           \
+        conf = default;                          \
+    }
+
 #define rps_conf_init_ptr_value(conf, default)  \
     if (conf == RPS_CONF_UNSET_PTR) {           \
         conf = default;                         \

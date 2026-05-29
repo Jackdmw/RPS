@@ -43,8 +43,8 @@ struct rps_connection_s {
 
     rps_cycle_t        *cycle;  /*连接所属cycle*/
     
-    struct sockaddr    *sockaddr;   /**远端地址 */
-    rps_str_t           addr_text;  /*点分十进制字符串*/
+    struct sockaddr     sockaddr;   /**远端地址（嵌入结构体，跟随连接生命周期） */
+    rps_str_t           addr_text;  /*点分十进制字符串，如 "192.168.1.1" */
 
     void               *data;       /*指向具体请求结构体,或者，对于空闲连接对象，指向下一个空闲连接对象*/
 
