@@ -30,7 +30,8 @@ struct rps_cycle_s {
     rps_str_t                 prefix;           // 程序安装路径
 
     rps_str_t                 conf_param;       // -g 传的内联配置
-    rps_uint_t                if_pthread:1;       // 是否是多线程
+    rps_str_t                 use;              // 事件机制
+    rps_uint_t                if_pthread:1;     // 多线程？
 
     rps_connection_t         *connections;      //worker 进程持有,一个连接池
     rps_connection_t         *free_connection;
