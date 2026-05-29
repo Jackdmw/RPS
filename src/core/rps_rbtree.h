@@ -53,7 +53,7 @@ struct rps_rbtree_s {
 
 rps_rbtree_t   *rps_rbtree_create(rps_pool_t  *pool,rps_rbtree_insert_pt insert);
 rps_int_t rps_rbtree_init(rps_pool_t  *pool,rps_rbtree_insert_pt insert,rps_rbtree_t *tree);
-rps_int_t rps_rbtree_insert_rebalance(rps_rbtree_node_t *node,rps_rbtree_node_t *sentinel);
+rps_int_t rps_rbtree_insert_rebalance(rps_rbtree_node_t *node, rps_rbtree_t *tree);
 rps_int_t rps_rbtree_erase(rps_rbtree_node_t *node,rps_rbtree_t *tree);
 rps_rbtree_node_t *rps_rbtree_next(rps_rbtree_node_t *root,rps_rbtree_node_t *node,rps_rbtree_node_t *sentinel);
 
