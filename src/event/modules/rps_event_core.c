@@ -67,13 +67,16 @@ char * rps_set_use(rps_conf_t *cf,rps_command_t *cmd,void* conf){
 
     if(rps_strcmp_with_cstr(values[1],"epoll")){
         ccf -> use = (rps_str_t)rps_string("epoll");
+        cf -> cycle -> use = ccf -> use;
         cf -> cycle -> if_pthread = 0;
     }
     else if (rps_strcmp_with_cstr(values[1],"io_uring")){
         ccf -> use = (rps_str_t)rps_string("io_uring");
+        cf -> cycle -> use = ccf -> use;
     }
     else if ( rps_strcmp_with_cstr(values[1],"threads")){
         ccf -> use = (rps_str_t)rps_string("threads");
+        cf -> cycle -> use = ccf -> use;
         cf -> cycle -> if_pthread = 1;
     }
     else {
