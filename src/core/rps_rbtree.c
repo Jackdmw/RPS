@@ -14,20 +14,21 @@
     __node -> parent = __root -> parent;                \
     __root -> right = __node -> left;                   \
     __root -> parent = __node;                          \
-    __node -> left = __root -> right;                   \
+    __node -> left = __root;                            \
                                                         \
     __root -> right -> parent = __root;                 \
 }
 
 static void  rps_rbtree_swap(rps_rbtree_node_t * node1,rps_rbtree_node_t * node2,rps_rbtree_node_t *sentinel,rps_rbtree_t *tree);
+static void rps_rbtree_default_insert_value(rps_rbtree_t* tree, rps_rbtree_node_t *node, void *key_ptr);
 
 rps_int_t rps_rbtree_init(rps_pool_t  *pool,rps_rbtree_insert_pt insert,rps_rbtree_t *tree){
     
-    tree->insert = insert;
-    tree->root = rps_palloc(pool,sizeof(rps_rbtree_node_t));
-    if(tree -> root == NULL){
-        return RPS_RBTREE_ERROR;
+    tree -> insert = rps_rbtree_default_insert_value;
+    if (insert != NULL){
+        tree->insert = insert;
     }
+    
     tree->sentinel = rps_palloc(pool,sizeof(rps_rbtree_node_t));
     if(tree -> sentinel == NULL){
         return RPS_RBTREE_ERROR;
@@ -36,7 +37,7 @@ rps_int_t rps_rbtree_init(rps_pool_t  *pool,rps_rbtree_insert_pt insert,rps_rbtr
     tree -> sentinel -> left = tree -> sentinel;
     tree -> sentinel ->right = tree -> sentinel;
     tree -> sentinel -> parent = tree -> sentinel;
-
+    tree -> root = tree -> sentinel;
     return RPS_RBTREE_OK;
 }
 rps_rbtree_t  *rps_rbtree_create(rps_pool_t *pool,rps_rbtree_insert_pt insert){
@@ -53,27 +54,25 @@ rps_rbtree_t  *rps_rbtree_create(rps_pool_t *pool,rps_rbtree_insert_pt insert){
     return tree;
 
 }
-rps_int_t rps_rbtree_insert_rebalance(rps_pool_t *pool, rps_rbtree_node_t *node,rps_rbtree_node_t *root){
+rps_int_t rps_rbtree_insert_rebalance(rps_rbtree_node_t *node,rps_rbtree_node_t *sentinel){
     
     rps_rbtree_node_t *parent;
     rps_rbtree_node_t *uncle;
     rps_rbtree_node_t *grandparent;
 
-
     while(1){
         parent = node->parent;
-        if(parent == NULL){
+        if(parent == sentinel){
             node -> color = RPS_RBTREE_BLACK;
             break;
         }
 
-        grandparent = parent -> parent;
-        if(grandparent -> left == parent){
-            uncle = grandparent -> right;
-        }
-        else uncle = grandparent -> left;
-
         if(parent->color == RPS_RBTREE_RED){
+            grandparent = parent -> parent;
+            if(grandparent -> left == parent){
+                uncle = grandparent -> right;
+            }
+            else uncle = grandparent -> left;
             /**
              * 3节点平衡修复
              */
@@ -134,18 +133,28 @@ rps_int_t rps_rbtree_insert_rebalance(rps_pool_t *pool, rps_rbtree_node_t *node,
     return RPS_RBTREE_OK;
 }
 /**
- * 对于直接比较大小的，将值插入node中的key，然后调用此函数
+ * 默认插入算法，当初始化传入空值时填入
  * @param node:当前node的地址
  */
-void rps_rbtree_insert_value(rps_rbtree_t *tree,rps_rbtree_node_t *node,rps_rbtree_node_t *sentinel){
+void rps_rbtree_default_insert_value(rps_rbtree_t *tree, rps_rbtree_node_t *node, void * key_ptr){
     
     rps_rbtree_node_t           *trace;
     rps_rbtree_node_t           *root;
-
+    rps_rbtree_node_t           *sentinel;
+    rps_uint_t                   key;
+    
+    node -> key_ptr = key_ptr;
+    key = *(rps_uint_t*)node -> key_ptr;
     root = tree->root;
+    sentinel = tree -> sentinel;
 
     if( root == sentinel){
         tree -> root = node;
+        node -> parent = sentinel;
+        node -> color = RPS_RBTREE_BLACK;
+        node -> right = sentinel;
+        node -> left = sentinel;
+        return ;
     }
     node -> color = RPS_RBTREE_RED;
     node -> left = sentinel;
@@ -153,29 +162,32 @@ void rps_rbtree_insert_value(rps_rbtree_t *tree,rps_rbtree_node_t *node,rps_rbtr
     
     while(root != sentinel){
         trace = root;
-        if(node -> key <= root -> key){
+        if(key <= *(rps_uint_t*)root -> key_ptr){
             root = root -> left;
         }
         else root = root -> right;
     }
     node -> parent = trace;
-    if(trace -> key >= node ->key){
+    if(*(rps_uint_t*)trace -> key_ptr >= key){
         trace -> left = node;
-        return ;
     }
-    trace -> right = node;
-    
+    else {
+        trace -> right = node;
+    }
+    rps_rbtree_insert_rebalance(node, sentinel);
 }
 rps_rbtree_node_t *rps_rbtree_next(rps_rbtree_node_t *root,rps_rbtree_node_t *node,rps_rbtree_node_t *sentinel){
+    (void)root;
     /**
      * 找到第一个有右节点的祖宗节点
      */
     if(node -> right == sentinel){
 
         while(node -> parent -> right == node){
-            if(node == root )
-            return NULL;
             node = node -> parent;
+        }
+        if(node -> parent == sentinel){
+            return NULL;
         }
         node = node -> parent;
     }
@@ -261,16 +273,13 @@ static void  rps_rbtree_swap(rps_rbtree_node_t * node1,rps_rbtree_node_t * node2
 /**
  * 0红1黑
  */
-rps_int_t rps_rbtree_erase(rps_pool_t *pool, rps_rbtree_node_t *node,rps_rbtree_t *tree){
+rps_int_t rps_rbtree_erase(rps_rbtree_node_t *node,rps_rbtree_t *tree){
     
     rps_rbtree_node_t           *leaf;
     rps_rbtree_node_t           *root;
     rps_rbtree_node_t           *sentinel;
     rps_rbtree_node_t           *parent;
     rps_rbtree_node_t           *brother;
-    rps_rbtree_node_t           *inherit;
-    u_char                       color;
-
 
     root = tree -> root;
     sentinel = tree -> sentinel;
@@ -304,6 +313,7 @@ rps_int_t rps_rbtree_erase(rps_pool_t *pool, rps_rbtree_node_t *node,rps_rbtree_
         else {
             parent -> right = node -> right;
         }
+        return RPS_RBTREE_OK;
    }
    else if (node -> left != sentinel){
         node -> left -> color = RPS_RBTREE_BLACK;
@@ -314,6 +324,7 @@ rps_int_t rps_rbtree_erase(rps_pool_t *pool, rps_rbtree_node_t *node,rps_rbtree_
         else {
             parent -> right = node -> left;
         }
+        return RPS_RBTREE_OK;
    }
    
    /**
@@ -325,6 +336,10 @@ rps_int_t rps_rbtree_erase(rps_pool_t *pool, rps_rbtree_node_t *node,rps_rbtree_
         }
         else node -> parent -> right = sentinel;
         node = node -> parent;
+        if (node == sentinel) {
+            tree -> root = sentinel;
+            return RPS_RBTREE_OK;
+        }
         while(node != root){
             parent = node -> parent;
             
@@ -350,7 +365,7 @@ rps_int_t rps_rbtree_erase(rps_pool_t *pool, rps_rbtree_node_t *node,rps_rbtree_
                     /**
                      * 处理三节点，远端不是红
                      */
-                    if (brother -> right != RPS_RBTREE_RED){
+                    if (brother -> right -> color != RPS_RBTREE_RED){
                         brother -> left -> color =RPS_RBTREE_BLACK;
                         brother -> color = RPS_RBTREE_RED;
                         rps_rbtree_Right_rotate(brother);
@@ -380,11 +395,11 @@ rps_int_t rps_rbtree_erase(rps_pool_t *pool, rps_rbtree_node_t *node,rps_rbtree_
                     rps_rbtree_Right_rotate(parent);
                     brother = parent -> left;
                 }
-                if( brother -> left -> color & brother -> right -> color == RPS_RBTREE_BLACK){
+                if( brother -> left -> color == RPS_RBTREE_BLACK && brother -> right -> color == RPS_RBTREE_BLACK){
                     brother -> color = RPS_RBTREE_RED;
                 }
                 else {
-                    if (brother -> right -> color != RPS_RBTREE_RED){
+                    if (brother -> left -> color != RPS_RBTREE_RED){
                         brother -> color = RPS_RBTREE_RED;
                         brother -> right -> color = RPS_RBTREE_BLACK;
                         rps_rbtree_Left_rotate(brother);
