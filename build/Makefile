@@ -609,6 +609,30 @@ src/http/modules/rps_http_proxy_module.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.s
 .PHONY : src/http/modules/rps_http_proxy_module.c.s
 
+src/http/rps_http_core.o: src/http/rps_http_core.c.o
+.PHONY : src/http/rps_http_core.o
+
+# target to build an object file
+src/http/rps_http_core.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_core.c.o
+.PHONY : src/http/rps_http_core.c.o
+
+src/http/rps_http_core.i: src/http/rps_http_core.c.i
+.PHONY : src/http/rps_http_core.i
+
+# target to preprocess a source file
+src/http/rps_http_core.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_core.c.i
+.PHONY : src/http/rps_http_core.c.i
+
+src/http/rps_http_core.s: src/http/rps_http_core.c.s
+.PHONY : src/http/rps_http_core.s
+
+# target to generate assembly for a file
+src/http/rps_http_core.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_core.c.s
+.PHONY : src/http/rps_http_core.c.s
+
 src/http/rps_http_module.o: src/http/rps_http_module.c.o
 .PHONY : src/http/rps_http_module.o
 
@@ -774,6 +798,9 @@ help:
 	@echo "... src/http/modules/rps_http_proxy_module.o"
 	@echo "... src/http/modules/rps_http_proxy_module.i"
 	@echo "... src/http/modules/rps_http_proxy_module.s"
+	@echo "... src/http/rps_http_core.o"
+	@echo "... src/http/rps_http_core.i"
+	@echo "... src/http/rps_http_core.s"
 	@echo "... src/http/rps_http_module.o"
 	@echo "... src/http/rps_http_module.i"
 	@echo "... src/http/rps_http_module.s"

@@ -39,6 +39,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o.d"
   "CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o"
   "CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o.d"
+  "CMakeFiles/RPS.dir/src/http/rps_http_core.c.o"
+  "CMakeFiles/RPS.dir/src/http/rps_http_core.c.o.d"
   "CMakeFiles/RPS.dir/src/http/rps_http_module.c.o"
   "CMakeFiles/RPS.dir/src/http/rps_http_module.c.o.d"
   "CMakeFiles/RPS.dir/src/http/rps_http_parse.c.o"
