@@ -126,16 +126,20 @@ rps_epoll_add_event(rps_event_t *ev, rps_uint_t event)
     }
     ee.data.ptr = ev;
 
-    if (ev->active) {
-        op = EPOLL_CTL_MOD;
-    } else {
-        op = EPOLL_CTL_ADD;
-        ev->active = 1;
-    }
+    op = ev->active ? EPOLL_CTL_MOD : EPOLL_CTL_ADD;
 
     if (epoll_ctl(epoll_fd, op, c->fd, &ee) == -1) {
-        return RPS_ERROR;
+        /* fd 可能因连接回收而重新 accept，旧 active 标志导致 MOD 对新 fd 失效 */
+        if (op == EPOLL_CTL_MOD && errno == ENOENT) {
+            op = EPOLL_CTL_ADD;
+            if (epoll_ctl(epoll_fd, op, c->fd, &ee) == -1) {
+                return RPS_ERROR;
+            }
+        } else {
+            return RPS_ERROR;
+        }
     }
+    ev->active = 1;
 
     ev->epoll_events = ee.events;
 

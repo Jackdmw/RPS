@@ -93,7 +93,7 @@ void rps_free_connection(rps_connection_t *c){
     
 }
 /**
- * 用于关闭连接，但是，不会还会给连接池
+ * 用于关闭连接，但是，不会还给连接池
  */
 void rps_close_connection(rps_connection_t *c){
     if (c->fd > 0) {
@@ -109,9 +109,12 @@ void rps_close_connection(rps_connection_t *c){
         rps_destroy_pool(c -> pool);
         c -> pool = NULL;
     }
-    /* 清空远端地址，连接回收到空闲链表时不会残留旧数据 */
+    /* 清空远端地址和事件状态，连接回收到空闲链表时不会残留旧数据 */
     rps_memzero(&c->sockaddr, sizeof(struct sockaddr));
     rps_memzero(&c->addr_text, sizeof(rps_str_t));
+
+    if (c->read  != NULL) c->read->active  = 0;
+    if (c->write != NULL) c->write->active = 0;
 }
 
 rps_int_t

@@ -146,6 +146,7 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c);
 void rps_http_close_request(rps_http_request_t *r);
 void rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc);
 void rps_http_complete_request(rps_connection_t *c);
+void rps_http_wait_request_handler(rps_event_t *ev);
 
 // 解析
 rps_int_t rps_http_parse_request_line(rps_http_request_t *r);
@@ -153,6 +154,7 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r);
 
 // 发送响应
 rps_int_t rps_http_add_response_header(rps_http_request_t *r, rps_str_t key, rps_str_t value);
+void      rps_http_set_content_length(rps_http_request_t *r, size_t len);
 rps_int_t rps_http_send_header(rps_http_request_t *r);
 rps_int_t rps_http_send_body(rps_http_request_t *r, rps_buf_t *body);
 rps_int_t rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out);

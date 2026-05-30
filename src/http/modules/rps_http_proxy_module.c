@@ -237,19 +237,19 @@ rps_http_proxy_merge_loc_conf(rps_pool_t *pool, void *parent, void *child)
         if (rps_array_init(&merged, pool,
                            prev->set_headers.nelts + conf->set_headers.nelts,
                            sizeof(rps_http_proxy_header_t)) == RPS_ERROR) {
-            return RPS_CONF_ERROR;
+            return "error";
         }
 
         for (j = 0; j < prev->set_headers.nelts; j++) {
             ph = ((rps_http_proxy_header_t *)prev->set_headers.elts) + j;
             h = rps_array_push(&merged);
-            if (h == NULL) return RPS_CONF_ERROR;
+            if (h == NULL) return "error";
             h->key = ph->key; h->value = ph->value;
         }
         for (j = 0; j < conf->set_headers.nelts; j++) {
             ph = ((rps_http_proxy_header_t *)conf->set_headers.elts) + j;
             h = rps_array_push(&merged);
-            if (h == NULL) return RPS_CONF_ERROR;
+            if (h == NULL) return "error";
             h->key = ph->key; h->value = ph->value;
         }
 

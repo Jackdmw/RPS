@@ -32,7 +32,7 @@ static void rps_worker_process_cycle(rps_cycle_t *cylce);
 /* 事件驱动相关 */
 static rps_cycle_t    *rps_cycle;     /* worker 进程当前 cycle */
 static void rps_event_accept(rps_event_t *ev);
-static void rps_http_wait_request_handler(rps_event_t *ev);
+void rps_http_wait_request_handler(rps_event_t *ev);
 
 static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
 
@@ -574,7 +574,7 @@ rps_event_accept(rps_event_t *ev)
 
     if (rps_cycle->event_engine->add_event(new_c->read, RPS_READ_EVENT) != RPS_OK) {
         rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
-                      "failed to add read event to epoll");
+                      "failed to add read event to epoll: %s", strerror(errno));
         rps_free_connection(new_c);
         return;
     }
@@ -587,7 +587,7 @@ rps_event_accept(rps_event_t *ev)
 /*
  * 客户端连接上有数据到达 → 读入 buffer → 解析 → 进入阶段引擎
  */
-static void
+void
 rps_http_wait_request_handler(rps_event_t *ev)
 {
     rps_connection_t           *c;
@@ -607,7 +607,7 @@ rps_http_wait_request_handler(rps_event_t *ev)
 
     /* 客户端超时：半开连接或慢速攻击直接关闭 */
     if (ev->timedout) {
-        rps_log_error(RPS_LOG_INFO, rps_cycle->log, 0,
+        rps_log_error(RPS_LOG_INFO, c -> cycle ->log, 0,
                       "client timed out, closing");
         rps_http_finalize_request(r, RPS_ERROR);
         rps_http_complete_request(c);
@@ -657,7 +657,7 @@ rps_http_wait_request_handler(rps_event_t *ev)
             }
 
             if (r->main_conf == NULL) {
-                container = rps_cycle->conf_ctx[rps_http_module.index];
+                container = c -> cycle->conf_ctx[rps_http_module.index];
                 if (container != NULL)
                     r->main_conf = container->main_conf;
             }
@@ -678,32 +678,3 @@ rps_http_wait_request_handler(rps_event_t *ev)
 }
 
 
-/*
- * 请求已结束 (finalize 后调用)，决定连接的命运。
- */
-void
-rps_http_complete_request(rps_connection_t *c)
-{
-    rps_http_request_t  *r;
-
-    if (c->close) {
-        rps_free_connection(c);
-        return;
-    }
-
-    /* keepalive: 创建新请求，注册读事件 */
-    r = rps_http_create_request(c);
-    if (r == NULL) {
-        rps_free_connection(c);
-        return;
-    }
-    c->data          = r;
-    c->read->handler = rps_http_wait_request_handler;
-    c->read->data    = c;
-
-    if (rps_cycle->event_engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
-        rps_free_connection(c);
-        return;
-    }
-    rps_event_add_timer(c->read, 60000);
-}

@@ -245,7 +245,7 @@ rps_http_core_post_rewrite_phase(rps_http_request_t *r,
         r->internal_redirect++;
         if (r->internal_redirect > 10) {
             rps_http_finalize_request(r, RPS_ERROR);
-    rps_http_complete_request(r->connection);
+            rps_http_complete_request(r->connection);
             return RPS_OK;
         }
 
@@ -325,16 +325,21 @@ rps_http_core_content_phase(rps_http_request_t *r,
             /* 兜底：没有 content handler 处理此请求 */
             rps_buf_t *body;
 
-            rps_http_send_header(r);
-
             body = rps_buf_create(r->pool, 256);
             if (body != NULL) {
                 body->last = rps_cpymem(body->last, "Hello from RPS!\n", 16);
+                rps_http_set_content_length(r,
+                    (size_t)(body->last - body->pos));
+            }
+
+            rps_http_send_header(r);
+
+            if (body != NULL) {
                 rps_http_send_body(r, body);
             }
 
             rps_http_finalize_request(r, RPS_OK);
-    rps_http_complete_request(r->connection);
+            rps_http_complete_request(r->connection);
             return RPS_OK;
         }
         return RPS_AGAIN;
@@ -342,7 +347,7 @@ rps_http_core_content_phase(rps_http_request_t *r,
 
     if (rc == RPS_OK || rc == RPS_HTTP_DONE) {
         rps_http_finalize_request(r, RPS_OK);
-    rps_http_complete_request(r->connection);
+        rps_http_complete_request(r->connection);
         return RPS_OK;
     }
 
@@ -483,7 +488,7 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
 
     if (cmcf == NULL || cmcf->phase_engine.handlers == NULL) {
         rps_http_finalize_request(r, RPS_ERROR);
-    rps_http_complete_request(r->connection);
+        rps_http_complete_request(r->connection);
         return RPS_ERROR;
     }
 

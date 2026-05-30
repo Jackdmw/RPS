@@ -5,6 +5,23 @@
 #include <sys/socket.h>
 
 /*
+ * 往 headers_out 设置 Content-Length
+ */
+void
+rps_http_set_content_length(rps_http_request_t *r, size_t len)
+{
+    char buf[32];
+    int  n;
+
+    n = snprintf(buf, sizeof(buf), "%zu", len);
+    r->headers_out.content_length_n.value.data = rps_palloc(r->pool, (size_t)n + 1);
+    if (r->headers_out.content_length_n.value.data != NULL) {
+        memcpy(r->headers_out.content_length_n.value.data, buf, (size_t)n + 1);
+        r->headers_out.content_length_n.value.len = (rps_uint_t)n;
+    }
+}
+
+/*
  * 往 headers_out 追加一个 header
  */
 rps_int_t
@@ -85,6 +102,7 @@ rps_http_send_header(rps_http_request_t *r)
     p = rps_cpymem(p, "Connection: ", 12);
     if (r->keepalive) {
         p = rps_cpymem(p, "keep-alive\r\n", 12);
+        p = rps_cpymem(p, "Keep-Alive: timeout=60\r\n", 24);
     } else {
         p = rps_cpymem(p, "close\r\n", 7);
     }
@@ -175,27 +193,3 @@ rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out)
     return RPS_OK;
 }
 
-/*
- * 最终回收请求
- * 这里只负责清理请求资源。
- * 对于keepalive的请求，会给conn打上close标记
- */
-void
-rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc)
-{
-    rps_connection_t  *c;
-    unsigned           keepalive;
-
-    c        = r->connection;
-    keepalive = r->keepalive;
-
-    if (rc != RPS_OK) {
-        keepalive = 0;
-    }
-
-    rps_http_close_request(r);
-
-    if (c) {
-        c->close = !keepalive;
-    }
-}

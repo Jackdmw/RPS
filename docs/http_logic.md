@@ -224,59 +224,113 @@ rps_http_complete_request(c):
 
 ---
 
-## 7. 代理路径
+## 7. upstream 层（上游连接管理）
 
-代理是 CONTENT 阶段的 handler，整体流程:
+nginx 将上游连接管理的通用逻辑（connect → send → read → cleanup）抽象为
+`ngx_http_upstream` 框架。具体协议模块（proxy、fastcgi、uwsgi）只需实现
+**create_request** 和 **process_header** 两个回调。
 
-### 7.1 发起
+### 7.1 架构分层
 
 ```
-rps_http_proxy_handler(r):
-  r->keepalive = 0                     // 代理连接不复用
-  获取上游连接 uc
-  非阻塞 connect
-  build_request(r, uc->pool) → 请求 buffer
-  r->upstream = uc
-  add_event(uc->write) + add_timer(uc->write, connect_timeout)
+upstream 层（通用，rps_upstream.c）:
+  - 隐式状态机：通过切换 r/w 事件 handler 改变阶段
+  - connect → 发送请求 → 读取响应头 → 处理响应体
+  - 超时管理（connect / send / read）
+  - 连接 keepalive 缓存
+
+协议模块（proxy、fastcgi...）:
+  - create_request():    构造发往后端的协议请求
+  - process_header():    解析后端响应头
+  - finalize_request():  请求结束时清理（可选）
+```
+
+### 7.2 隐式状态机（通过事件 handler 切换）
+
+nginx 的核心技巧：**不维护显式 state 变量，而是切换事件回调函数指针**：
+
+```
+阶段                 write_handler                        read_handler
+──────────────────────────────────────────────────────────────────
+CONNECT             ngx_http_upstream_send_request       ngx_http_upstream_process_header
+SEND (发送请求)      ngx_http_upstream_send_request       (同上)
+SEND 完成后          ngx_http_upstream_dummy_handler     (同上)
+READ (读响应头)      (同上)                               ngx_http_upstream_process_header
+READ (读响应体)      ngx_http_upstream_send_response     ngx_http_upstream_process_body
+```
+
+epoll 事件就绪时，调用对应 handler。handler 内部推进状态，
+完成后**换函数指针**指向下一阶段的 handler。
+
+### 7.3 核心回调（协议模块实现）
+
+| 回调 | 调用时机 | 职责 |
+|------|---------|------|
+| `create_request(r, u)` | Send 阶段开始 | 构造发往后端的请求 buffer，放入 `u->request_bufs` |
+| `process_header(r, u)` | 收到后端响应数据 | 解析响应头，返回 OK（头部完整）或 AGAIN（继续等数据） |
+| `finalize_request(r, rc)` | upstream 结束 | 清理协议特定资源 |
+
+### 7.4 流程
+
+```
+rps_http_proxy_handler(r):               // 代理本身极简
+  r->keepalive = 0
+  u = rps_upstream_create(r, &proxy_callbacks)
+  u->peer_addr = plcf->addr
+  u->timeouts  = { connect, send, read }
+  r->upstream  = u
+  rps_upstream_init(u)
   return RPS_AGAIN
+
+rps_upstream_init(u):
+  1. u->create_request(r, u)            // 调用协议回调，构造请求
+  2. rps_upstream_connect(u)            // 获取连接（keepalive 缓存）
+     ├── 命中缓存 → 直接复用
+     └── 未命中   → 新建 + 非阻塞 connect
+  3. add_event(peer->write, WRITE)
+      write_handler = upstream_send_request     // 事件驱动状态机启动
+      read_handler  = upstream_process_header
+  4. 返回
+
+upstream_send_request(ev):
+  1. 检查 SO_ERROR（首次进入时，即 connect 完成）
+  2. send(u->request_bufs)
+     EAGAIN → return（下次写事件继续）
+     全部发完 → write_handler = dummy_handler（不再写）
+
+upstream_process_header(ev):
+  1. recv() → u->buffer
+  2. u->process_header(r, u)            // 调用协议回调逐次解析
+     AGAIN → return（等更多数据）
+     OK    → 头部完成
+  3. write_handler = upstream_send_response
+     read_handler  = upstream_process_body
+  4. upstream_send_response(r, u)       // 发响应状态行+头给客户端
+
+upstream_process_body(ev):
+  recv() → u->buffer
+  → 直接 send 给客户端（non-buffering 模式）
+  n == 0 → upstream_finalize(r, OK)
+
+upstream_finalize(r, rc):
+  1. 清理 peer 连接（keepalive? 放回缓存 : free）
+  2. u->finalize_request(r, rc)         // 协议回调
+  3. finalize_request(r, rc)            // 结束请求
+  4. complete_request(c)                // 连接收尾
 ```
 
-### 7.2 上游写 (connect → send)
+### 7.5 与现有代理代码的区别
 
-```
-state 1: del_timer(connect), 检查 SO_ERROR
-         add_timer(write, send_timeout), state=2
+| 现有 | 新设计 |
+|------|--------|
+| 代理模块写全部事件回调 | 事件回调在 upstream 层，代理只写 create_request / process_header |
+| 显式 state 变量（proxy_state=1,2,3） | 隐式状态，通过换 handler 函数指针 |
+| 代理模块管理定时器 | upstream 层统一管理 |
+| 代理模块直接 free(uc) | upstream 层通过 keepalive 缓存管理 |
 
-state 2: send(headers+body)
-         EAGAIN → return
-         完成 → del_timer, del_event(write)
-                add_event(read) + add_timer(read, read_timeout)
-```
+### 7.6 keepalive 缓存
 
-### 7.3 上游读
-
-```
-读后端数据 → send 给客户端
-n==0 (后端关闭):
-  del_timer + del_event(read)
-  r->upstream = NULL     // 防 finalize 二次释放 uc
-  free(uc)
-  finalize(r, OK)        // 销毁 r
-  complete_request(c)    // 代理 keepalive=0 → c->close=1 → free(c)
-```
-
-代理的异步回调直接调 finalize + complete_request，不经过阶段引擎。
-
-### 7.4 代理异常
-
-**前置错误** (uc==NULL, connect 失败等):
-  handler 未调 cleanup，r 有效。
-  → send_header(502), return RPS_OK
-  → checker 调 finalize(r, OK) + complete_request(c)
-
-**add_event 失败 / 写/读回调中的错误**:
-  cleanup 内部已调 finalize(r, ERROR) + complete_request(c)
-  → handler **必须 return RPS_AGAIN**（checker 不应再调 finalize）
+见第 9 章。
 
 ---
 
@@ -288,15 +342,206 @@ n==0 (后端关闭):
 | c->pool | rps_get_connection | close_connection |
 | r | create_request (在 r->pool 中) | finalize → destroy_pool(r->pool) |
 | r->pool | create_request | finalize → destroy_pool |
-| uc (代理) | rps_get_connection | read_handler 或 cleanup |
-| uc->pool | rps_get_connection | free(uc) |
+| u (upstream ctx) | rps_upstream_create (在 r->pool 中) | upstream_finalize（内部） |
+| u->peer (上游连接) | upstream_connect（keepalive 或新建） | upstream_finalize（释放或回缓存） |
+| u->peer->pool | rps_get_connection | free(peer) 或 回缓存保留 |
 
 ---
 
-## 9. 待实现
+## 9. upstream keepalive
 
-1. output_filter 写事件续传
-2. chunked transfer encoding
-3. 客户端超时可配置
-4. proxy upstream keepalive
-5. error_page / access_log
+### 9.1 设计目标
+
+upstream 层（第 7 章）在 `upstream_connect` 中自动查缓存，在
+`upstream_finalize` 中自动归还。代理模块无需关心缓存逻辑。
+
+```
+rps_upstream_connect(u):
+  peer = upstream_cache_lookup(u->peer_addr)
+  if peer != NULL  → 复用
+  else            → rps_get_connection() + connect()
+
+rps_upstream_finalize(r, rc):
+  if 可复用 → upstream_cache_push(peer, u->peer_addr)   // 放回，设空闲定时器
+  else      → rps_free_connection(peer)                 // 直接关闭
+```
+
+### 9.2 缓存结构
+
+每个 upstream 地址（IP:Port）维护一个空闲连接栈（LIFO）：
+
+```
+每个 worker 进程内:
+
+upstream_cache: 以 sockaddr 为 key 的哈希表（小规模直接用链表即可）
+  └── per-addr 连接栈:
+        ├── max_cached:  每个地址最多缓存 N 个空闲连接
+        ├── idle_timeout: 空闲超时（默认 60s）
+        └── stack:        空闲连接链表（后进先出）
+```
+
+每个缓存的连接挂一个空闲定时器，到期关闭。
+
+### 9.3 接口
+
+```
+// 获取一个到指定地址的上游连接（先查缓存，查不到则新建 + connect）
+rps_connection_t *rps_upstream_get(rps_upstream_addr_t *addr,
+                                    rps_cycle_t *cycle,
+                                    rps_log_t *log);
+
+// 归还上游连接：可复用则放回缓存（设空闲定时器），否则 close
+void rps_upstream_release(rps_connection_t *uc);
+```
+
+`rps_upstream_get` 返回的 `uc` 已经 connect 完成（非阻塞），调用者直接 `add_event(uc->write)` 开始发送。
+
+`rps_upstream_release` 内部判断：
+- 响应头是 `Connection: close` → 不缓存，直接 free
+- 连接出错（SO_ERROR 非零）→ 不缓存
+- 请求数超过 `max_requests` → 不缓存
+- 否则 → 放入栈顶，设空闲定时器
+
+### 9.4 生命周期
+
+```
+代理发起:
+  uc = rps_upstream_get(addr)
+    ├── 命中缓存 → 直接复用（fd 已连接，跳过 TCP 握手）
+    └── 未命中   → rps_get_connection() + connect() 新建
+
+代理请求处理完毕:
+  rps_upstream_release(uc)
+    ├── 可缓存 → 放入栈顶，设空闲超时
+    └── 不可缓存 → rps_free_connection(uc)
+
+空闲超时:
+  定时器触发 → 从缓存中移除 → rps_free_connection(uc)
+```
+
+### 9.5 与现有代理模块的接入
+
+代理 handler 中改动极小——只换获取和释放方式：
+
+```
+rps_http_proxy_handler(r):
+  uc = rps_upstream_get(&addr, r->cycle, r->cycle->log);
+  // ... 后续与现在相同: r->upstream = uc, add_event(uc->write) ...
+
+代理读回调 n==0:
+  r->upstream = NULL;
+  rps_upstream_release(uc);  // 替代 rps_free_connection(uc)
+  finalize(r, OK);
+  complete_request(c);
+```
+
+### 9.6 缓存清理
+
+- worker 退出时遍历所有缓存栈，close 所有空闲连接
+- 后期可扩展：按内存压力驱逐最冷端（LRU 而非纯栈）
+
+---
+
+## 10. response filter chain
+
+### 10.1 设计目标
+
+当前 handler 需要记住：先调 `rps_http_set_content_length`，再调 `send_header`，
+再调 `send_body`。这些应该由框架自动处理。
+
+nginx 的做法是 filter 链：handler 只产出响应头和 body，
+后续由一组 filter 依次处理，最终到达 write filter 写入 socket。
+
+### 10.2 filter 链结构
+
+```
+handler:
+  设置 r->headers_out.status / content_type 等
+  r->out_chain = 响应 body 的 buffer 链
+  return RPS_OK
+
+↓
+
+header filter:
+  1. 自动补 Content-Type（默认 text/html）
+  2. 补 Content-Length（从 out_chain 计算总长）
+  3. 补 Connection / Keep-Alive
+  4. 序列化 headers_out → 放入 out_chain 头部
+
+↓
+
+body filter（可选，当前跳过）:
+  chunked 编码 / gzip / range 处理
+
+↓
+
+write filter:
+  遍历 out_chain，逐段 send() 到 c->fd
+  EAGAIN → 注册 c->write 事件，下次继续
+  全部写完 → 返回
+```
+
+### 10.3 接口
+
+```
+// handler 调用：发送完整响应
+rps_int_t rps_http_send_response(rps_http_request_t *r);
+
+// internal: filter 函数签名
+typedef rps_int_t (*rps_http_filter_pt)(rps_http_request_t *r);
+```
+
+`rps_http_send_response(r)`:
+1. 调用 header filter → 序列化 headers_out，计算 Content-Length，补 Connection/Keep-Alive
+2. 调用 body filter（当前为空，直接透传）
+3. 调用 write filter → 遍历 out_chain，send 到客户端
+4. 全部成功 → RPS_OK / EAGAIN → RPS_AGAIN
+
+### 10.4 handler 的用法
+
+```
+// handler 设置响应
+r->headers_out.status.value = rps_string("200 OK");
+r->headers_out.content_type.value = rps_string("text/html");
+
+// 设置 body
+rps_buf_t *body = rps_buf_create(r->pool, 256);
+body->last = rps_cpymem(body->last, "Hello!", 6);
+
+rps_chain_t *cl = rps_palloc(r->pool, sizeof(rps_chain_t));
+cl->buf = body; cl->next = NULL;
+r->out_chain = cl;
+
+// 发出去——header filter 自动补 Content-Length: 6
+return rps_http_send_response(r);
+```
+
+handler 不再单独调 `send_header` / `send_body` / `set_content_length`。
+所有这些由 `send_response` → filter 链统一处理。
+
+### 10.5 header filter 自动补全规则
+
+| 头 | 条件 | 动作 |
+|----|------|------|
+| Content-Type | 未设置 | 默认 `text/html` |
+| Content-Length | 未设置且有 out_chain | 遍历 chain 计算总长并设置 |
+| Connection | keepalive | 设为 `keep-alive` |
+| Keep-Alive | keepalive | `timeout=60` |
+| Connection | 非 keepalive | 设为 `close` |
+| Server | 未设置 | 默认 `RPS` |
+
+### 10.6 write filter EAGAIN 处理
+
+```
+write filter 初次调用: send() → 部分写入
+  → 剩余数据留在 out_chain（pos 前移）
+  → 注册 c->write 事件，handler = write_filter_continue
+  → 返回 RPS_AGAIN
+
+c->write 就绪 → write_filter_continue:
+  → 从上次位置继续 send()
+  → 全部写完 → del_event(c->write)
+  → 如果 r->done → finalize(r) + complete_request(c)
+```
+
+这解决了当前 `output_filter` 返回 `RPS_AGAIN` 后无人续传的问题。
