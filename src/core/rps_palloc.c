@@ -15,6 +15,8 @@ rps_pool_t *rps_create_pool(size_t size){
     p->d.next = NULL;
     p->current  = p;
     p->d.failed = 0;
+    p->large    = NULL;
+    p->log      = NULL;
     p->max = size - sizeof(rps_pool_t);
     return p;
 }
@@ -71,6 +73,7 @@ void  rps_destroy_pool_large(rps_pool_large_t *large){
     while(large){
         if (large->alloc){
             free(large->alloc);
+            large->alloc = NULL;
         }
         large = large->next;
     }
