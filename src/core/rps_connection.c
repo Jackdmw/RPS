@@ -100,6 +100,11 @@ void rps_close_connection(rps_connection_t *c){
         close(c->fd);
         c->fd = 0;
     }
+
+    /* 清除定时器，防止连接回收后残留的 timer 误触发新连接的 handler */
+    if (c->read  != NULL) rps_event_del_timer(c->read);
+    if (c->write != NULL) rps_event_del_timer(c->write);
+
     if ( c -> pool != NULL){
         rps_destroy_pool(c -> pool);
         c -> pool = NULL;

@@ -5,6 +5,8 @@
 #include "core/rps_palloc.h"
 #include "core/rps_buf.h"
 
+#include <netinet/in.h>
+
 /*
  *  约定：
  *    checker → RPS_AGAIN : 继续循环（phase_index 已更新）
@@ -33,12 +35,12 @@ rps_http_core_generic_phase(rps_http_request_t *r,
     }
 
     if (rc == RPS_AGAIN) {
-        /* handler 需要等待 IO，挂起请求 */
         return RPS_OK;
     }
 
-    /* 其他返回值视为错误，跳到 LOG phase 进行收尾 */
+    /* 其他返回值视为错误 */
     rps_http_finalize_request(r, rc);
+    rps_http_complete_request(r->connection);
     return RPS_OK;
 }
 
@@ -70,6 +72,7 @@ rps_http_core_rewrite_phase(rps_http_request_t *r,
     }
 
     rps_http_finalize_request(r, rc);
+    rps_http_complete_request(r->connection);
     return RPS_OK;
 }
 
@@ -91,39 +94,86 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
 
     if (cmcf == NULL) {
         rps_http_finalize_request(r, RPS_ERROR);
+    rps_http_complete_request(r->connection);
         return RPS_OK;
     }
 
-    /*匹配虚拟主机（按 Host 头）*/
+    /* 匹配虚拟主机 — 第一优先级：监听端口，第二优先级：Host 头 */
     servers = cmcf->servers.elts;
     srv     = NULL;
 
     host = r->headers_in.host.value;
 
-    for (i = 0; i < cmcf->servers.nelts; i++) {
-        srv_container = servers[i];
-        if (srv_container == NULL) {
-            continue;
-        }
+    /* 提取当前连接的监听端口 */
+    {
+        rps_uint_t                  listen_port;
+        struct sockaddr_in         *sin;
 
-        srv = srv_container->srv_conf[rps_http_core_module.ctx_index];
+        sin = (struct sockaddr_in *)&r->connection->listenling->sockaddr;
+        listen_port = ntohs(sin->sin_port);
 
-        if (srv == NULL) {
-            continue;
-        }
+        /* 第一轮：端口 + Host 精确匹配 */
+        for (i = 0; i < cmcf->servers.nelts; i++) {
+            srv_container = servers[i];
+            if (srv_container == NULL) {
+                continue;
+            }
 
-        if (host.len == 0) {
-            /* 没有 Host 头，
-             * 用第一个 server，
-             * 一般就只有http1.0版本会有这个问题，1.1强制要求host字段了
-             */
+            srv = srv_container->srv_conf[rps_http_core_module.ctx_index];
+            if (srv == NULL || srv->port != listen_port) {
+                continue;
+            }
+
             r->srv_conf = srv_container->srv_conf;
-            break;
+
+            if (host.len == 0
+                || rps_strcmp(host, srv->server_name) == RPS_STRING_EQUAL)
+            {
+                break;
+            }
         }
 
-        if (rps_strcmp(host, srv->server_name) == RPS_STRING_EQUAL) {
-            r->srv_conf = srv_container->srv_conf;
-            break;
+        /* 第二轮：只要端口匹配，取第一个 */
+        if (r->srv_conf == NULL) {
+            for (i = 0; i < cmcf->servers.nelts; i++) {
+                srv_container = servers[i];
+                if (srv_container == NULL) {
+                    continue;
+                }
+
+                srv = srv_container->srv_conf[rps_http_core_module.ctx_index];
+                if (srv == NULL || srv->port != listen_port) {
+                    continue;
+                }
+
+                r->srv_conf = srv_container->srv_conf;
+                break;
+            }
+        }
+    }
+
+    /* 回退：没有端口匹配的，按原来的 Host 头逻辑 */
+    if (r->srv_conf == NULL) {
+        for (i = 0; i < cmcf->servers.nelts; i++) {
+            srv_container = servers[i];
+            if (srv_container == NULL) {
+                continue;
+            }
+
+            srv = srv_container->srv_conf[rps_http_core_module.ctx_index];
+            if (srv == NULL) {
+                continue;
+            }
+
+            if (host.len == 0) {
+                r->srv_conf = srv_container->srv_conf;
+                break;
+            }
+
+            if (rps_strcmp(host, srv->server_name) == RPS_STRING_EQUAL) {
+                r->srv_conf = srv_container->srv_conf;
+                break;
+            }
         }
     }
 
@@ -195,6 +245,7 @@ rps_http_core_post_rewrite_phase(rps_http_request_t *r,
         r->internal_redirect++;
         if (r->internal_redirect > 10) {
             rps_http_finalize_request(r, RPS_ERROR);
+    rps_http_complete_request(r->connection);
             return RPS_OK;
         }
 
@@ -283,6 +334,7 @@ rps_http_core_content_phase(rps_http_request_t *r,
             }
 
             rps_http_finalize_request(r, RPS_OK);
+    rps_http_complete_request(r->connection);
             return RPS_OK;
         }
         return RPS_AGAIN;
@@ -290,6 +342,7 @@ rps_http_core_content_phase(rps_http_request_t *r,
 
     if (rc == RPS_OK || rc == RPS_HTTP_DONE) {
         rps_http_finalize_request(r, RPS_OK);
+    rps_http_complete_request(r->connection);
         return RPS_OK;
     }
 
@@ -298,6 +351,7 @@ rps_http_core_content_phase(rps_http_request_t *r,
     }
 
     rps_http_finalize_request(r, rc);
+    rps_http_complete_request(r->connection);
     return RPS_OK;
 }
 
@@ -429,6 +483,7 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
 
     if (cmcf == NULL || cmcf->phase_engine.handlers == NULL) {
         rps_http_finalize_request(r, RPS_ERROR);
+    rps_http_complete_request(r->connection);
         return RPS_ERROR;
     }
 
@@ -448,5 +503,6 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
          */
     }
     rps_http_finalize_request(r, RPS_OK);
+    rps_http_complete_request(r->connection);
     return RPS_OK;
 }

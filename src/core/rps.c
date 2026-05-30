@@ -13,6 +13,8 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <time.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "http/modules/rps_http_proxy_module.h"
 typedef struct
 {
@@ -31,8 +33,6 @@ static void rps_worker_process_cycle(rps_cycle_t *cylce);
 static rps_cycle_t    *rps_cycle;     /* worker 进程当前 cycle */
 static void rps_event_accept(rps_event_t *ev);
 static void rps_http_wait_request_handler(rps_event_t *ev);
-static rps_msec_t rps_event_find_timer(void);
-static void rps_event_expire_timers(void);
 
 static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
 
@@ -101,23 +101,6 @@ int main(int argc,char **argv){
     if(cycle == NULL){
         rps_log_error(RPS_LOG_ERR,log,0,"New cycle create failed!");
     }
-    rps_core_conf_t * c=cycle->conf_ctx[0];
-    printf("worker_processes:%lu\npid:%s\ndaemon:%lu\n",c->worker_processes,c->pid.data,c->daemon);
-    rps_event_container_t *container = cycle->conf_ctx[2];
-    rps_event_conf_t * e = container->event_conf[0];
-    printf("\nuse is %s\nworker_connections is %lu \n",e->use.data,e->worker_connections);
-    
-    rps_http_conf_container_t     *http_root_container = cycle ->conf_ctx[rps_http_module.index];
-    rps_http_core_main_conf_t     *hcmcf = http_root_container->main_conf[rps_http_core_module.ctx_index];
-    rps_http_conf_container_t     *http_srv_container = ((void**)hcmcf -> servers.elts)[0];
-    rps_http_core_srv_conf_t      *hcscf = http_srv_container -> srv_conf[rps_http_core_module.ctx_index];
-    rps_http_conf_container_t     *http_loc_container = ((void**)hcscf -> locations.elts)[1];
-    rps_http_core_loc_conf_t      *hclcf = http_loc_container -> loc_conf[rps_http_core_module.ctx_index];
-    rps_http_proxy_loc_conf_t     *plcf = http_loc_container -> loc_conf[rps_http_proxy_module.ctx_index];
-
-    printf("proxy_host: %s\nproxy_port: %lu\nproxy_uri: %s\n", plcf->upstream_host.data,plcf->upstream_port, plcf->upstream_uri.data);
-    printf ("location pattern is %s", hclcf -> pattern.data);
-
     rps_master_process_cycle(cycle);
 } 
 static  int rps_daemon(){
@@ -281,6 +264,7 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
         }
         if(pid == 0){
             rps_log_error(RPS_LOG_INFO , cycle -> log, 0, "worker process has been created,[WORKER PID]: %d", getpid());
+            close(pid_f.fd);
             rps_worker_process_cycle(cycle);
             break;
         }
@@ -469,6 +453,13 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
         return;
     }
 
+    /* 初始化定时器红黑树 */
+    if (rps_event_timer_init(cycle->pool) != RPS_OK) {
+        rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
+                      "failed to init timer tree");
+        return;
+    }
+
     /* 打开所有监听 socket */
     if (rps_open_listening_sockets(cycle) != RPS_OK) {
         rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
@@ -513,7 +504,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
         engine->process_events(cycle, timer);
 
         rps_event_expire_timers();
-    }
+    } 
 }
 
 /*
@@ -555,6 +546,21 @@ rps_event_accept(rps_event_t *ev)
     new_c->fd = fd;
     rps_set_nonblocking(fd);
 
+    /* 保存客户端地址到嵌入结构体 */
+    memcpy(&new_c->sockaddr, &sa, len);
+
+    if (sa.sa_family == AF_INET) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)&sa;
+        char                ip[INET_ADDRSTRLEN];
+
+        inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
+        new_c->addr_text.len  = strlen(ip);
+        new_c->addr_text.data = rps_palloc(new_c->pool, new_c->addr_text.len + 1);
+        if (new_c->addr_text.data != NULL) {
+            memcpy(new_c->addr_text.data, ip, new_c->addr_text.len + 1);
+        }
+    }
+
     r = rps_http_create_request(new_c);
     if (r == NULL) {
         rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
@@ -570,7 +576,11 @@ rps_event_accept(rps_event_t *ev)
         rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
                       "failed to add read event to epoll");
         rps_free_connection(new_c);
+        return;
     }
+
+    /* 客户端读取超时：60s 内未发完完整请求则关闭 */
+    rps_event_add_timer(new_c->read, 60000);
 }
 
 
@@ -595,6 +605,15 @@ rps_http_wait_request_handler(rps_event_t *ev)
         return;
     }
 
+    /* 客户端超时：半开连接或慢速攻击直接关闭 */
+    if (ev->timedout) {
+        rps_log_error(RPS_LOG_INFO, rps_cycle->log, 0,
+                      "client timed out, closing");
+        rps_http_finalize_request(r, RPS_ERROR);
+        rps_http_complete_request(c);
+        return;
+    }
+
     b = r->request_body;
 
     /* 从 socket 读数据 */
@@ -602,121 +621,89 @@ rps_http_wait_request_handler(rps_event_t *ev)
     if (n <= 0) {
         if (n == 0 || (errno != EAGAIN && errno != EINTR)) {
             rps_http_finalize_request(r, RPS_ERROR);
-            goto done;
+            rps_http_complete_request(c);
         }
         return;
     }
     b->last += n;
-    printf ("accept from link: \n %s\n", b -> pos);
 
     /* 状态机：按 parse_status 依次调用解析 */
     for (;;) {
         if (r->parse_status == 0) {
             rc = rps_http_parse_request_line(r);
-            if (rc == RPS_HTTP_PARSE_EAGIN) {
-                return;
-            }
+            if (rc == RPS_HTTP_PARSE_EAGIN) return;
             if (rc == RPS_HTTP_PARSE_ERROR) {
                 rps_http_finalize_request(r, RPS_ERROR);
-                goto done;
+                rps_http_complete_request(c);
+                return;
             }
         }
         if (r->parse_status == 1) {
             rc = rps_http_parse_headers(r);
-            if (rc == RPS_HTTP_PARSE_EAGIN) {
-                return;
-            }
+            if (rc == RPS_HTTP_PARSE_EAGIN) return;
             if (rc == RPS_HTTP_PARSE_ERROR) {
                 rps_http_finalize_request(r, RPS_ERROR);
-                goto done;
+                rps_http_complete_request(c);
+                return;
             }
         }
-        printf ("startline:\n 1. method: %s\n 2. uri: %s\n 3. httpversion: %s", r -> method.data, r -> uri.data, r -> http_version.data);
-        printf ("headers:\n1. content-length: %lu\n2. content-type: %s\n3. connection:%s\n4. host:%s\n5. user-agent:%s\n ", r -> headers_in.content_length_n, 
-            r -> headers_in.content_type.value.data, r -> headers_in.connection.value.data, r -> headers_in.host.value.data, r -> headers_in.user_agent.value.data);
-        
+
         if (r->parse_status == 2) {
-            /* 如果请求有 body（Content-Length > 0），检查是否读完 */
             if (r->headers_in.content_length_n > 0) {
                 size_t hdr_end = (size_t)(b->pos - b->start);
                 size_t total   = hdr_end + r->headers_in.content_length_n;
                 size_t have    = (size_t)(b->last - b->start);
-
-                if (have < total) {
-                    return;
-                }
+                if (have < total) return;
             }
 
             if (r->main_conf == NULL) {
                 container = rps_cycle->conf_ctx[rps_http_module.index];
-                if (container != NULL) {
+                if (container != NULL)
                     r->main_conf = container->main_conf;
-                }
             }
             cmcf = r->main_conf ? r->main_conf[rps_http_core_module.ctx_index] : NULL;
             if (cmcf == NULL) {
                 rps_http_finalize_request(r, RPS_ERROR);
-                goto done;
+                rps_http_complete_request(c);
+                return;
             }
 
-            /*
-             * run_phases 在内部已通过 checker 或 sentinel 调用 finalize，
-             * 此处不再重复调用，避免非 keepalive 请求 double free pool。
-             * TODO: EAGAIN 路径需要单独处理（request 挂起等 I/O，不能进 done 回收）
-             */
+            /* 解耦：连接不再持有请求，阶段引擎独立处理 */
+            c->data = NULL;
             rps_http_run_phases(r, cmcf);
-            goto done;
+            /* 阶段引擎返回——checker 已负责 finalize+complete_request */
+            return;
         }
     }
+}
 
-done:
-    if (c && !c->close && c->data) {
-        r = c->data;
-        if (r->keepalive) {
-            /* 销毁旧 request 及 pool，重建干净的 request */
-            rps_http_close_request(r);
-            c->pool = rps_create_pool(1024);
-            if (c->pool == NULL) {
-                rps_free_connection(c);
-                return;
-            }
-            r = rps_http_create_request(c);
-            if (r == NULL) {
-                rps_free_connection(c);
-                return;
-            }
-            c->data = r;
-        }
-        c->read->handler = rps_http_wait_request_handler;
-        c->read->data    = c;
-        if (rps_cycle->event_engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
-            rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
-                          "failed to re-add read event for keepalive");
-            rps_free_connection(c);
-        }
-    } else if (c && c->close) {
-        /* 非 keepalive / 错误：归还连接到空闲池 */
+
+/*
+ * 请求已结束 (finalize 后调用)，决定连接的命运。
+ */
+void
+rps_http_complete_request(rps_connection_t *c)
+{
+    rps_http_request_t  *r;
+
+    if (c->close) {
         rps_free_connection(c);
+        return;
     }
+
+    /* keepalive: 创建新请求，注册读事件 */
+    r = rps_http_create_request(c);
+    if (r == NULL) {
+        rps_free_connection(c);
+        return;
+    }
+    c->data          = r;
+    c->read->handler = rps_http_wait_request_handler;
+    c->read->data    = c;
+
+    if (rps_cycle->event_engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
+        rps_free_connection(c);
+        return;
+    }
+    rps_event_add_timer(c->read, 60000);
 }
-
-
-static rps_msec_t
-rps_event_find_timer(void)
-{
-    /*
-     * TODO: 遍历红黑树找最近到期定时器
-     * 当前无定时器需求，返回 -1 表示无限等待
-     */
-    return -1;
-}
-
-static void
-rps_event_expire_timers(void)
-{
-    /*
-     * TODO: 遍历红黑树，触发已到期的定时器回调
-     * 当前无定时器需求，空实现
-     */
-}
-

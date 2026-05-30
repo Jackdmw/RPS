@@ -125,10 +125,6 @@ rps_int_t  rps_event_core_init_process(rps_cycle_t *cycle){
         cycle -> connections[i].write->data = &cycle -> connections[i];
 
         cycle -> connections[i].cycle = cycle;
-        cycle -> connections[i].sockaddr = rps_pcalloc(cycle -> pool, sizeof(struct sockaddr));
-        if(cycle -> connections[i].sockaddr == NULL){
-            return RPS_ERROR;
-        }
     }
     cycle -> connections [worker_connections-1].data = NULL;
     cycle -> free_connection = cycle -> connections;

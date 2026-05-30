@@ -51,6 +51,7 @@ struct rps_event_s{
     unsigned                    timer_set:1;    /* 是否加入红黑树计时器*/
 
     rps_rbtree_node_t           timer;          /* 红黑树*/
+    rps_msec_t                  timer_key;      /* 定时器超时时间，timer.key_ptr 指向此处 */
 
     unsigned                    epoll_events;   /* 当前 epoll 注册的事件标志（EPOLLIN/EPOLLOUT） */
 
@@ -58,5 +59,15 @@ struct rps_event_s{
 
 };
 
+
+/* 定时器管理 */
+rps_int_t  rps_event_add_timer(rps_event_t *ev, rps_msec_t timeout);
+rps_int_t  rps_event_del_timer(rps_event_t *ev);
+rps_msec_t rps_event_find_timer(void);
+void       rps_event_expire_timers(void);
+rps_int_t  rps_event_timer_init(rps_pool_t *pool);
+
+/* 当前时间（毫秒） */
+rps_msec_t rps_current_msec(void);
 
 #endif

@@ -513,6 +513,30 @@ src/event/modules/rps_event_core.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/event/modules/rps_event_core.c.s
 .PHONY : src/event/modules/rps_event_core.c.s
 
+src/event/rps_event.o: src/event/rps_event.c.o
+.PHONY : src/event/rps_event.o
+
+# target to build an object file
+src/event/rps_event.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/event/rps_event.c.o
+.PHONY : src/event/rps_event.c.o
+
+src/event/rps_event.i: src/event/rps_event.c.i
+.PHONY : src/event/rps_event.i
+
+# target to preprocess a source file
+src/event/rps_event.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/event/rps_event.c.i
+.PHONY : src/event/rps_event.c.i
+
+src/event/rps_event.s: src/event/rps_event.c.s
+.PHONY : src/event/rps_event.s
+
+# target to generate assembly for a file
+src/event/rps_event.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/event/rps_event.c.s
+.PHONY : src/event/rps_event.c.s
+
 src/event/rps_event_module.o: src/event/rps_event_module.c.o
 .PHONY : src/event/rps_event_module.o
 
@@ -738,6 +762,9 @@ help:
 	@echo "... src/event/modules/rps_event_core.o"
 	@echo "... src/event/modules/rps_event_core.i"
 	@echo "... src/event/modules/rps_event_core.s"
+	@echo "... src/event/rps_event.o"
+	@echo "... src/event/rps_event.i"
+	@echo "... src/event/rps_event.s"
 	@echo "... src/event/rps_event_module.o"
 	@echo "... src/event/rps_event_module.i"
 	@echo "... src/event/rps_event_module.s"

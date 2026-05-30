@@ -17,12 +17,21 @@
 
 rps_http_request_t *rps_http_create_request(rps_connection_t *c){
     rps_http_request_t          *request;
-    request = rps_pcalloc(c -> pool, sizeof(rps_http_request_t));
+    rps_pool_t                  *pool;
+
+    /* 请求独立内存池，与连接池分离，请求结束时只销毁此池 */
+    pool = rps_create_pool(4096);
+    if (pool == NULL) {
+        return NULL;
+    }
+
+    request = rps_pcalloc(pool, sizeof(rps_http_request_t));
     if (request == NULL){
+        rps_destroy_pool(pool);
         return NULL;
     }
     request -> connection = c;
-    request -> pool = c -> pool;
+    request -> pool = pool;
     request -> cycle = c -> cycle;
     /*
      * 请求行字段全部置为空，后续解析起始行时填充
@@ -38,7 +47,7 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c){
      */
     rps_memzero(&request->headers_in, sizeof(rps_http_headers_in_t));
     rps_memzero(&request->headers_out, sizeof(rps_http_headers_out_t));
-    
+
     request -> headers_in.connection.key = (rps_str_t)rps_string("connection");
     request -> headers_in.content_length.key = (rps_str_t)rps_string("content-length");
     request -> headers_in.user_agent.key = (rps_str_t)rps_string("user-agent");
@@ -48,20 +57,26 @@ rps_http_request_t *rps_http_create_request(rps_connection_t *c){
     request -> headers_out.server.key = (rps_str_t)rps_string("server");
     request -> headers_out.status.key = (rps_str_t)rps_string("status");
 
-    if (rps_list_init(&request -> headers_in.headers, c -> pool, 5, sizeof(rps_http_header_kv_t)) == RPS_ERROR){
+    if (rps_list_init(&request -> headers_in.headers, pool, 5, sizeof(rps_http_header_kv_t)) == RPS_ERROR){
+        rps_destroy_pool(pool);
         return NULL;
     }
     request -> headers_in.headers_n = 0;
-    if (rps_list_init(&request -> headers_out.headers, c -> pool, 5, sizeof(rps_http_header_kv_t)) == RPS_ERROR){
+    if (rps_list_init(&request -> headers_out.headers, pool, 5, sizeof(rps_http_header_kv_t)) == RPS_ERROR){
+        rps_destroy_pool(pool);
         return NULL;
     }
     request -> headers_out.headers_n = 0;
-    
-    
-    
+
+    /* 默认响应头 */
+    request -> headers_out.status.value           = (rps_str_t)rps_string("200 OK");
+    request -> headers_out.server.value           = (rps_str_t)rps_string("RPS");
+    request -> headers_out.content_type.value     = (rps_str_t)rps_null_string;
+    request -> headers_out.content_length_n.value = (rps_str_t)rps_null_string;
     /* 请求体缓冲区：parser 和事件循环需要往里读数据 */
-    request->request_body = rps_buf_create(request->pool, 4096);
+    request->request_body = rps_buf_create(pool, 4096);
     if (request->request_body == NULL) {
+        rps_destroy_pool(pool);
         return NULL;
     }
     request->request_body_rest = 0;
@@ -110,9 +125,9 @@ void rps_http_close_request(rps_http_request_t *r){
         r->upstream = NULL;
     }
 
+    /* 断开连接与请求的关联 */
     if (r->connection && r->connection->data == r) {
         r->connection->data = NULL;
-        r->connection->pool = NULL;  /* pool 已自行销毁，防止外层 free_connection 二次释放 */
     }
 
     if (pool) {
