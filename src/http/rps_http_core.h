@@ -1,9 +1,11 @@
 #ifndef _RPS_HTTP_CORE_H_INCLUDED_
 #define _RPS_HTTP_CORE_H_INCLUDED_
 
+typedef struct rps_http_request_s rps_http_request_t;
 #include "core/rps_config.h"
 #include "core/rps_conf_file.h"
 #include "core/rps_string.h"
+#include "http/rps_upstream.h"
 
 typedef struct rps_http_headers_in_s rps_http_headers_in_t;
 typedef struct rps_http_headers_out_s rps_http_headers_out_t;
@@ -80,7 +82,7 @@ typedef struct{
 } rps_http_module_t;
 
 
-typedef struct rps_http_request_s {
+struct rps_http_request_s {
     rps_connection_t       *connection;          /* 客户端连接 */
     rps_cycle_t            *cycle;
 
@@ -108,15 +110,7 @@ typedef struct rps_http_request_s {
      * 代理的完整链路：客户端 ←→ [RPS] ←→ 后端
      * 需要独立的后端连接和缓冲区
      */
-    rps_connection_t       *upstream;            /* 到后端 upstream 的连接 */
-    rps_buf_t              *upstream_buf;        /* 后端响应数据缓冲区 */
-    rps_uint_t              proxy_state;         /* 代理状态机：
-                                                   * 0: 空闲
-                                                   * 1: 正在连接后端
-                                                   * 2: 发送请求到后端
-                                                   * 3: 读取后端响应头
-                                                   * 4: 读取后端响应体
-                                                   * 5: 转发响应给客户端 */
+    rps_upstream_t         *upstream;            /* 上游上下文（含连接 + 状态机） */
 
     /* 配置与调度 */
     rps_uint_t              parse_status;        /* 解析阶段标记：
@@ -136,7 +130,7 @@ typedef struct rps_http_request_s {
     rps_log_t              *log;
     rps_msec_t              start_msec;          /* 请求到达时间（毫秒），用于超时/日志 */
     unsigned                keepalive:1;         /* 请求完成后是否保持连接（HTTP/1.1 默认 1） */
-} rps_http_request_t;
+};
 
 
 
@@ -158,7 +152,6 @@ void      rps_http_set_content_length(rps_http_request_t *r, size_t len);
 rps_int_t rps_http_send_header(rps_http_request_t *r);
 rps_int_t rps_http_send_body(rps_http_request_t *r, rps_buf_t *body);
 rps_int_t rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out);
-
-
+rps_int_t rps_http_send_response(rps_http_request_t *r);
 
 #endif

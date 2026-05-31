@@ -73,8 +73,6 @@ rps_http_create_request(rps_connection_t *c)
 
     request->out_chain   = NULL;
     request->upstream    = NULL;
-    request->upstream_buf = NULL;
-    request->proxy_state = 0;
     request->parse_status = 0;
     request->loc_conf     = NULL;
     request->main_conf    = NULL;
@@ -98,8 +96,25 @@ rps_http_close_request(rps_http_request_t *r)
 
     pool = r->pool;
 
+    /* 清理可能正在等待 EAGAIN 的写事件，防止引用已释放的 pool */
+    if (r->connection && r->connection->write
+        && r->connection->write->active)
+    {
+        r->cycle->event_engine->del_event(r->connection->write,
+                                          RPS_WRITE_EVENT);
+        r->connection->write->active = 0;
+        rps_event_del_timer(r->connection->write);
+    }
+
+    /*
+     * 正常流程下 r->upstream 已在 rps_upstream_finalize 中置 NULL。
+     * 若仍未释放（异常路径），清理其后端连接后丢弃。
+     */
     if (r->upstream) {
-        rps_free_connection(r->upstream);
+        if (r->upstream->peer) {
+            rps_free_connection(r->upstream->peer);
+            r->upstream->peer = NULL;
+        }
         r->upstream = NULL;
     }
 
@@ -115,6 +130,7 @@ rps_http_close_request(rps_http_request_t *r)
 /*
  * 结束请求：根据 keepalive + 成功/失败 决定连接命运。
  * 销毁 r，调用者不可再访问。
+ * 请求结束后，应当立即决定连接是否存活
  */
 void
 rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc)
