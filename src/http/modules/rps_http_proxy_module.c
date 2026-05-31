@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "http/rps_http_core.h"
+#include "http/rps_upstream.h"
 #include "core/rps_conf_file.h"
 #include "http/modules/rps_http_proxy_module.h"
 #include "http/modules/rps_http_core_module.h"
@@ -28,26 +29,16 @@ static char *rps_http_proxy_merge_loc_conf(rps_pool_t *pool, void *parent, void 
 static rps_int_t rps_http_proxy_postconfiguration(rps_conf_t *cf);
 static rps_int_t rps_http_proxy_handler(rps_http_request_t *r);
 
-/* 非阻塞代理回调 */
-static void rps_http_proxy_upstream_write_handler(rps_event_t *ev);
-static void rps_http_proxy_upstream_read_handler(rps_event_t *ev);
+/* upstream 协议回调 */
+static rps_int_t rps_http_proxy_create_request(rps_http_request_t *r,
+                                                rps_upstream_t *u);
+static rps_int_t rps_http_proxy_process_header(rps_http_request_t *r,
+                                                rps_upstream_t *u);
 
 /* 内部辅助 */
 static rps_int_t rps_http_proxy_build_request(rps_http_request_t *r,
     rps_http_proxy_loc_conf_t *plcf, rps_pool_t *pool,
     u_char **buf_out, size_t *len_out);
-static void rps_http_proxy_cleanup(rps_http_request_t *r, rps_int_t status);
-static rps_int_t rps_http_proxy_connect_upstream(rps_http_proxy_loc_conf_t *plcf);
-
-/*
- * 上游连接上下文，存于 uc->data
- */
-typedef struct {
-    rps_http_request_t         *r;
-    u_char                     *send_buf;
-    size_t                      send_len;
-    size_t                      send_pos;
-} rps_http_upstream_ctx_t;
 
 
 rps_command_t rps_http_proxy_module_commands[] = {
@@ -160,6 +151,7 @@ rps_http_proxy_create_loc_conf(rps_conf_t *cf)
     plcf->upstream_host     = (rps_str_t)rps_null_string;
     plcf->upstream_port     = RPS_CONF_UNSET_UINT;
     plcf->upstream_uri      = (rps_str_t)rps_null_string;
+    plcf->upstream_name     = (rps_str_t)rps_null_string;
 
     plcf->proxy_method      = (rps_str_t)rps_null_string;
     plcf->proxy_http_version = (rps_str_t)rps_null_string;
@@ -203,6 +195,7 @@ rps_http_proxy_merge_loc_conf(rps_pool_t *pool, void *parent, void *child)
         conf->upstream_host = prev->upstream_host;
         conf->upstream_port = prev->upstream_port;
         conf->upstream_uri  = prev->upstream_uri;
+        conf->upstream_name = prev->upstream_name;
     }
 
     rps_conf_init_msec_value(conf->connect_timeout, prev->connect_timeout);
@@ -300,6 +293,7 @@ rps_conf_set_proxy_pass(rps_conf_t *cf, rps_command_t *cmd, void *conf)
     plcf->proxy_pass = url;
 
     p = url.data;
+    /*跳过协议头,http://*/
     for (i = 0; i < url.len && p[i] != '\0'; i++) {
         if (p[i] == ':' && i + 2 < url.len && p[i + 1] == '/' && p[i + 2] == '/') {
             p += i + 3;
@@ -333,6 +327,22 @@ rps_conf_set_proxy_pass(rps_conf_t *cf, rps_command_t *cmd, void *conf)
         plcf->upstream_uri = (rps_str_t)rps_string("/");
     }
 
+    /*
+     * 如果 proxy_pass 是 http://<name> 格式（无端口号、无点号），
+     * 预存 upstream_name，在请求时从 upstream {} 块查找
+     */
+    if (plcf->upstream_port == 80) {
+        rps_uint_t has_dot = 0, k;
+        for (k = 0; k < plcf->upstream_host.len; k++) {
+            if (plcf->upstream_host.data[k] == '.') {
+                has_dot = 1; break;
+            }
+        }
+        if (!has_dot) {
+            plcf->upstream_name = plcf->upstream_host;
+        }
+    }
+
     return RPS_CONF_OK;
 }
 
@@ -363,6 +373,8 @@ rps_conf_set_proxy_header(rps_conf_t *cf, rps_command_t *cmd, void *conf)
 
 /*
  * 构造要发送到后端的 HTTP 请求（直接写入 buffer，零中间结构）
+ * TODO: 1. 目前没有处理header的重复性，后面再集中考虑，预计使用hash判断。
+ *       2. http_version 目前实际上算硬编码1.1
  */
 static rps_int_t
 rps_http_proxy_build_request(rps_http_request_t *r,
@@ -525,105 +537,130 @@ rps_http_proxy_connect_upstream(rps_http_proxy_loc_conf_t *plcf)
 }
 
 
+
 /*
- * CONTENT_PHASE handler：启动非阻塞代理流程
+ * CONTENT_PHASE handler：启动非阻塞代理流程（使用 upstream 层）
  */
 static rps_int_t
 rps_http_proxy_handler(rps_http_request_t *r)
 {
     rps_http_proxy_loc_conf_t  *plcf;
-    rps_connection_t           *uc;
-    rps_http_upstream_ctx_t    *ctx;
-    rps_cycle_t                *cycle;
-    int                         upstream_fd;
-    rps_int_t                   rc;
+    rps_upstream_t             *u;
 
-    if (r->loc_conf == NULL) {
-        return RPS_DECLINED;
-    }
+    if (r->loc_conf == NULL) return RPS_DECLINED;
 
     plcf = r->loc_conf[rps_http_proxy_module.ctx_index];
-    if (plcf == NULL || plcf->proxy_pass.data == NULL) {
-        return RPS_DECLINED;
-    }
+    if (plcf == NULL || plcf->proxy_pass.data == NULL) return RPS_DECLINED;
 
-    /* 代理不复用客户端连接，在所有错误路径之前置位 */
     r->keepalive = 0;
 
-    cycle = r->cycle;
-
-    /* 获取一个连接对象用于上游 */
-    uc = rps_get_connection(cycle, cycle->log, r->connection->listenling);
-    if (uc == NULL) {
+    u = rps_upstream_create(r);
+    if (u == NULL) {
         r->headers_out.status.value = (rps_str_t)rps_string("502 Bad Gateway");
-        rps_http_send_header(r);
+        rps_int_t send_rc = rps_http_send_response(r);
+        if (send_rc == RPS_AGAIN) {
+            return RPS_AGAIN;
+        }
         return RPS_HTTP_DONE;
     }
 
-    /* 分配上游上下文 */
-    ctx = rps_palloc(uc->pool, sizeof(rps_http_upstream_ctx_t));
-    if (ctx == NULL) {
-        rps_free_connection(uc);
-        r->headers_out.status.value = (rps_str_t)rps_string("502 Bad Gateway");
-        rps_http_send_header(r);
-        return RPS_HTTP_DONE;
+    /* 设置上游地址 */
+    u->peer_addr.host = plcf->upstream_host;
+    u->peer_addr.port = plcf->upstream_port;
+
+    /* 如果配置了 upstream_name，尝试从 upstream {} 块查找 */
+    if (plcf->upstream_name.data != NULL && plcf->upstream_name.len > 0) {
+        rps_http_core_main_conf_t  *cmcf;
+        rps_upstream_conf_t       **ups;
+        rps_uint_t                  j;
+
+        cmcf = r->main_conf[rps_http_core_module.ctx_index];
+        if (cmcf != NULL) {
+            ups = cmcf->upstreams.elts;
+            for (j = 0; j < cmcf->upstreams.nelts; j++) {
+                if (ups[j] != NULL
+                    && rps_strcmp(plcf->upstream_name, ups[j]->name)
+                       == RPS_STRING_EQUAL)
+                {
+                    u->upstream_conf = ups[j];
+                    break;
+                }
+            }
+        }
     }
 
-    /* 非阻塞 connect */
-    upstream_fd = rps_http_proxy_connect_upstream(plcf);
-    if (upstream_fd < 0) {
-        rps_free_connection(uc);
-        r->headers_out.status.value = (rps_str_t)rps_string("502 Bad Gateway");
-        rps_http_send_header(r);
-        return RPS_HTTP_DONE;
+    /* 超时 */
+    u->connect_timeout = plcf->connect_timeout;
+    u->send_timeout    = plcf->send_timeout;
+    u->read_timeout    = plcf->read_timeout;
+
+    /* 协议回调 */
+    u->create_request = rps_http_proxy_create_request;
+    u->process_header = rps_http_proxy_process_header;
+
+    r->upstream = u;
+
+    /* 启动 upstream。失败时 upstream_finalize 自动发送错误响应 + 清理 */
+    rps_upstream_init(r, u);
+    return RPS_AGAIN;
+}
+
+/*
+ * upstream 回调：构造发往后端的 HTTP 请求
+ */
+static rps_int_t
+rps_http_proxy_create_request(rps_http_request_t *r, rps_upstream_t *u)
+{
+    rps_http_proxy_loc_conf_t  *plcf;
+    u_char                     *buf;
+    size_t                      len;
+    rps_int_t                   rc;
+
+    plcf = r->loc_conf[rps_http_proxy_module.ctx_index];
+
+    rc = rps_http_proxy_build_request(r, plcf, r->pool, &buf, &len);
+    if (rc != RPS_OK) return RPS_ERROR;
+
+    u->request_bufs = rps_buf_create(r->pool, len);
+    if (u->request_bufs == NULL) return RPS_ERROR;
+
+    memcpy(u->request_bufs->pos, buf, len);
+    u->request_bufs->last = u->request_bufs->pos + len;
+
+    return RPS_OK;
+}
+
+/*
+ * upstream 回调：解析后端 HTTP 响应头
+ * 找到 \r\n\r\n 后转发状态行+头到客户端
+ */
+static rps_int_t
+rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
+{
+    u_char  *p, *end;
+
+    p   = u->response_buf->pos;
+    end = u->response_buf->last;
+
+    while (p + 3 < end) {
+        if (p[0] == '\r' && p[1] == '\n'
+            && p[2] == '\r' && p[3] == '\n') {
+            /* 头部完整，移动到 body 起始 */
+            u->response_buf->pos = p + 4;
+
+            /* 转发响应头给客户端（简化：直接用默认 200 OK） */
+            rps_http_send_header(r);
+
+            return RPS_OK;
+        }
+        p++;
     }
-
-    /* 构造要发送的请求 */
-    rc = rps_http_proxy_build_request(r, plcf, uc->pool,
-                                      &ctx->send_buf, &ctx->send_len);
-    if (rc != RPS_OK) {
-        close(upstream_fd);
-        rps_free_connection(uc);
-        r->headers_out.status.value = (rps_str_t)rps_string("502 Bad Gateway");
-        rps_http_send_header(r);
-        return RPS_HTTP_DONE;
-    }
-    ctx->send_pos = 0;
-
-    /* 绑定上下文和连接 */
-    ctx->r          = r;
-    uc->fd          = upstream_fd;
-    uc->data        = ctx;
-    r->upstream     = uc;
-
-    /* 设置上游事件回调 */
-    uc->write->handler = rps_http_proxy_upstream_write_handler;
-    uc->write->data    = uc;
-    uc->read->handler  = rps_http_proxy_upstream_read_handler;
-    uc->read->data     = uc;
-
-    /* 注册写事件（等待 connect 完成） */
-    rc = cycle->event_engine->add_event(uc->write, RPS_WRITE_EVENT);
-    if (rc != RPS_OK) {
-        /* cleanup 内部已调 finalize + complete_request，checker 不应再处理 */
-        rps_http_proxy_cleanup(r, RPS_ERROR);
-        return RPS_AGAIN;
-    }
-
-    /* connect 超时 */
-    rps_event_add_timer(uc->write, plcf->connect_timeout);
-
-    r->proxy_state = 1;
 
     return RPS_AGAIN;
 }
 
 
-/*
- * 上游 fd 可写回调
- * state 1: connect 完成 → 发送请求
- * state 2: 继续发送（上次 EAGAIN）
- */
+#if 0
 static void
 rps_http_proxy_upstream_write_handler(rps_event_t *ev)
 {
@@ -849,3 +886,4 @@ rps_http_proxy_cleanup(rps_http_request_t *r, rps_int_t status)
         rps_http_complete_request(c);
     }
 }
+#endif /*old proxy handlers */

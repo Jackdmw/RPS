@@ -10,8 +10,7 @@ typedef struct rps_http_core_main_conf_s {
     rps_uint_t                  client_max_body_size;
     rps_http_phase_t            phases[RPS_HTTP_PHASE_NUM];
     rps_http_phase_engine_t     phase_engine;
-
-    /*TODO: 应该还要加一个upstream  */
+    rps_array_t                 upstreams;     /* rps_upstream_conf_t* */
 } rps_http_core_main_conf_t;
 
 // server {} 级配置

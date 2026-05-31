@@ -272,6 +272,9 @@ void *rps_http_core_create_main_conf(rps_conf_t * cf){
     if (rps_array_init(&hcmcf-> servers,cf -> pool, 5, sizeof(void*))== RPS_ERROR){
         return NULL;
     }
+    if (rps_array_init(&hcmcf->upstreams, cf->pool, 4, sizeof(void*)) == RPS_ERROR){
+        return NULL;
+    }
     for (i = 0; i < RPS_HTTP_PHASE_NUM; i++){
         if (rps_array_init(&hcmcf->phases[i].handlers, cf->pool, 1, sizeof(rps_http_handler_pt)) == RPS_ERROR){
             return NULL;
@@ -515,6 +518,20 @@ rps_http_core_postconfiguration(rps_conf_t *cf)
         }
     }
 
+    /*
+     * 初始化所有 upstream 块的 peer 运行时状态（WRR 权重等）
+     */
+    {
+        rps_upstream_conf_t **ups;
+        rps_uint_t            k;
+
+        ups = cmcf->upstreams.elts;
+        for (k = 0; k < cmcf->upstreams.nelts; k++) {
+            if (ups[k] != NULL) {
+                rps_upstream_init_peers(ups[k]);
+            }
+        }
+    }
 
     return RPS_OK;
 }
