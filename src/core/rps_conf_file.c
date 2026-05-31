@@ -6,7 +6,7 @@
 
 #define RPS_CONF_BUFFER 4096
 
-#define rps_is_a_letter(word) ((word<='Z'&&word>='A')||(word <= 'z' && word >= 'a')||(word<= '9'&&word>='0')||word == '_'||word == '/')
+#define rps_is_a_letter(word) ((word<='Z'&&word>='A')||(word <= 'z' && word >= 'a')||(word<= '9'&&word>='0')||word == '_'||word == '/'||word == '.'||word == ':'||word == '='||word == '-')
 #define rps_word_push(cf,length,str) {\
     rps_str_t * word_str = rps_array_push(cf->args);\
     word_str->len = length;\
@@ -273,10 +273,9 @@ rps_conf_handler(rps_conf_t* cf,rps_int_t st)
                     }
                 }
                 // 命令所在块是否合理
-                type = type | cf->cmd_type;
+                // 如果不匹配，继续搜索其他模块（允许同名命令在不同块中）
                 if((cf->cmd_type & cmd->type) == 0){
-                    rps_log_error(RPS_LOG_ERR,cf->log,0,"\"%s\" shoud not be in this block,FILE:%s,LINE:%lu",cmd->name.data,cf->file_name.data,cf->conf_file->line);
-                    return RPS_ERROR;
+                    continue;
                 }
 
                 // 命令参数数目是否 合规
@@ -310,7 +309,12 @@ rps_conf_handler(rps_conf_t* cf,rps_int_t st)
                     rps_log_error(RPS_LOG_ERR,cf->log,0,"too many arguments in FILE: %s  LINE: %lu ",cf->file_name.data,cf->conf_file->line);
                     return RPS_ERROR;
                 }
-                if (type != cmd->type){
+                /*
+                 * 检查 args 数量是否在 cmd->type 允许的范围内。
+                 * 改用位与检查以支持 TAKE12 / TAKE1234 等多参数宏：
+                 * type 中的所有位必须在 cmd->type 中置位。
+                 */
+                if ((type & cmd->type) != type){
                     rps_log_error(RPS_LOG_ERR,cf->log,0,"the number of arguments is error,actually use: %d,FILE: %s, LINE: %lu",cf -> args -> nelts, cf->file_name.data, cf->conf_file->line);
                     return RPS_ERROR;
                 }
@@ -396,6 +400,13 @@ rps_conf_handler(rps_conf_t* cf,rps_int_t st)
                     rps_http_conf_container_t * cctx;
                     cctx = (rps_http_conf_container_t*)cf->ctx;
                     ctx = cctx->loc_conf[cycle->modules[i]->ctx_index];
+                }
+                /**
+                 *  HTTP_UPS  (upstream 块内部)
+                 *  cf->ctx 由 upstream 块的 set 函数设为 rps_upstream_conf_t*
+                 */
+                else if (cmd ->conf == RPS_CONF_BELONG_HTTP_UPS){
+                    ctx = cf->ctx;
                 }
                 rps_log_error(RPS_LOG_DEBUG,cf->log,0,"is going to execute set function, now ctx is %p",ctx);
                 if(cmd->set(cf,cmd,ctx) != NULL)

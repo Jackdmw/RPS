@@ -40,6 +40,7 @@ typedef struct rps_conf_file_s rps_conf_file_t;
 #define RPS_HTTP_MAIN_CONF          0x02000000
 #define RPS_HTTP_SRV_CONF           0x04000000
 #define RPS_HTTP_LOC_CONF           0x08000000
+#define RPS_HTTP_UPS_CONF           0x00020000
 #define RPS_EVENT_MAIN_CONF         0x10000000
 #define RPS_ANY_CONF                0xFF000000
 
@@ -70,6 +71,7 @@ typedef struct rps_conf_file_s rps_conf_file_t;
 #define RPS_CONF_BELONG_HTTP_SRV            2
 #define RPS_CONF_BELONG_HTTP_LOC            3
 #define RPS_CONF_BELONG_EVENT               4
+#define RPS_CONF_BELONG_HTTP_UPS            5
 
 /* 如果当前值是 Unset，则填入 default 值，否则保留用户配置的值 */
 #define rps_conf_init_value(conf, default) \
