@@ -323,29 +323,42 @@ rps_http_core_content_phase(rps_http_request_t *r,
         r->phase_index++;
         if (r->phase_index >= ph->next) {
             /* 兜底：没有 content handler 处理此请求 */
-            rps_buf_t *body;
+            rps_buf_t   *body;
+            rps_chain_t *cl;
 
             body = rps_buf_create(r->pool, 256);
             if (body != NULL) {
                 body->last = rps_cpymem(body->last, "Hello from RPS!\n", 16);
-                rps_http_set_content_length(r,
-                    (size_t)(body->last - body->pos));
+
+                cl = rps_palloc(r->pool, sizeof(rps_chain_t));
+                if (cl != NULL) {
+                    cl->buf  = body;
+                    cl->next = NULL;
+                    r->out_chain = cl;
+                }
             }
 
-            rps_http_send_header(r);
+            {
+                rps_int_t send_rc = rps_http_send_response(r);
 
-            if (body != NULL) {
-                rps_http_send_body(r, body);
+                if (send_rc == RPS_OK) {
+                    /* 同步发送完毕 */
+                    rps_http_finalize_request(r, RPS_OK);
+                    rps_http_complete_request(r->connection);
+                } else if (send_rc == RPS_AGAIN) {
+                    /* write_filter_continue 会在写就绪后 finalize */
+                } else {
+                    rps_http_finalize_request(r, RPS_ERROR);
+                    rps_http_complete_request(r->connection);
+                }
             }
-
-            rps_http_finalize_request(r, RPS_OK);
-            rps_http_complete_request(r->connection);
             return RPS_OK;
         }
         return RPS_AGAIN;
     }
 
     if (rc == RPS_OK || rc == RPS_HTTP_DONE) {
+        /* handler 已自行发送响应（如调用 rps_http_send_response） */
         rps_http_finalize_request(r, RPS_OK);
         rps_http_complete_request(r->connection);
         return RPS_OK;
