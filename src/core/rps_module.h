@@ -54,6 +54,7 @@ extern rps_module_t rps_event_core_module;
 extern rps_module_t rps_http_module;
 extern rps_module_t rps_http_core_module;
 extern rps_module_t rps_http_proxy_module;
+extern rps_module_t rps_upstream_module;
 extern rps_module_t rps_epoll_module;
 
 #endif
