@@ -112,7 +112,8 @@ rps_http_close_request(rps_http_request_t *r)
      */
     if (r->upstream) {
         if (r->upstream->peer) {
-            rps_free_connection(r->upstream->peer);
+            rps_upstream_close_peer_conn(r->upstream->peer,
+                                          r->upstream->upstream_conf);
             r->upstream->peer = NULL;
         }
         r->upstream = NULL;
