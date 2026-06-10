@@ -4,9 +4,8 @@
 #include "core/rps_palloc.h"
 #include <sys/socket.h>
 
-/* forward declarations */
 static rps_int_t rps_http_header_filter(rps_http_request_t *r);
-static rps_int_t rps_http_write_filter(rps_http_request_t *r);
+rps_int_t rps_http_write_filter(rps_http_request_t *r);
 static void rps_http_write_filter_continue(rps_event_t *ev);
 
 /*
@@ -42,9 +41,9 @@ rps_http_add_response_header(rps_http_request_t *r, rps_str_t key, rps_str_t val
     return RPS_OK;
 }
 
-/* ────────────────────────────────────────────────────────────
+/*
  * header_filter:  自动补齐头部 → 序列化 → 插入 out_chain 头部
- * ──────────────────────────────────────────────────────────── */
+ */
 static rps_int_t
 rps_http_header_filter(rps_http_request_t *r)
 {
@@ -165,11 +164,11 @@ rps_http_header_filter(rps_http_request_t *r)
     return RPS_OK;
 }
 
-/* ────────────────────────────────────────────────────────────
+/*
  * write_filter:  遍历 out_chain，逐段 send() 到客户端
  *                EAGAIN → 注册 c->write 事件，下次续传
- * ──────────────────────────────────────────────────────────── */
-static rps_int_t
+ */
+rps_int_t
 rps_http_write_filter(rps_http_request_t *r)
 {
     rps_connection_t *c;
@@ -222,9 +221,9 @@ eagain:
     return RPS_AGAIN;
 }
 
-/* ────────────────────────────────────────────────────────────
+/*
  * write_filter_continue:  c->write 事件就绪后的续传 handler
- * ──────────────────────────────────────────────────────────── */
+ */
 static void
 rps_http_write_filter_continue(rps_event_t *ev)
 {
@@ -271,11 +270,11 @@ rps_http_write_filter_continue(rps_event_t *ev)
     /* RPS_AGAIN: 事件保持注册，等待下次可写 */
 }
 
-/* ────────────────────────────────────────────────────────────
+/* 
  * rps_http_send_response:  统一的响应发送入口
  *                          handler 只需设置 headers_out 和
  *                          out_chain，然后调用此函数即可
- * ──────────────────────────────────────────────────────────── */
+ */
 rps_int_t
 rps_http_send_response(rps_http_request_t *r)
 {
@@ -286,10 +285,10 @@ rps_http_send_response(rps_http_request_t *r)
     return rps_http_write_filter(r);
 }
 
-/* ────────────────────────────────────────────────────────────
+/*
  * rps_http_send_header:  向后兼容：单独发送响应头（无 body）
  *                        内部使用 header_filter + write_filter
- * ──────────────────────────────────────────────────────────── */
+ */
 rps_int_t
 rps_http_send_header(rps_http_request_t *r)
 {
@@ -299,10 +298,10 @@ rps_http_send_header(rps_http_request_t *r)
     return rps_http_write_filter(r);
 }
 
-/* ────────────────────────────────────────────────────────────
+/*
  * rps_http_send_body:  向后兼容：追加 body 到 out_chain 末尾
  *                       然后调用 write_filter 发送
- * ──────────────────────────────────────────────────────────── */
+ */
 rps_int_t
 rps_http_send_body(rps_http_request_t *r, rps_buf_t *body)
 {
@@ -328,11 +327,11 @@ rps_http_send_body(rps_http_request_t *r, rps_buf_t *body)
     return rps_http_write_filter(r);
 }
 
-/* ────────────────────────────────────────────────────────────
+/*
  * rps_http_output_filter:  向后兼容包装器
  *                          将 out chain 临时设为 r->out_chain，
  *                          调用 write_filter 发送后恢复
- * ──────────────────────────────────────────────────────────── */
+ */
 rps_int_t
 rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out)
 {
