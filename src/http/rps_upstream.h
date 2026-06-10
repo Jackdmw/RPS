@@ -80,6 +80,9 @@ struct rps_upstream_conf_s {
 
     /* keepalive 空闲连接缓存（LIFO 栈） */
     rps_array_t     free_peers;         /* rps_upstream_cached_peer_t[] */
+
+    /* 连接对象内存池（空闲链表），每个 upstream 块独立管理 */
+    rps_connection_t    *free_upstream_connections;
 };
 
 /*
@@ -158,6 +161,9 @@ rps_connection_t *rps_upstream_get_peer(rps_http_request_t *r, rps_upstream_t *u
  * 归还后端连接：可复用则放入缓存并设空闲定时器，否则关闭。
  */
 void rps_upstream_free_peer(rps_upstream_t *u);
+
+/* 关闭独立分配的 upstream 后端连接（归还到所属 upstream 块的空闲链表） */
+void rps_upstream_close_peer_conn(rps_connection_t *c, rps_upstream_conf_t *ucf);
 
 extern rps_module_t rps_upstream_module;
 

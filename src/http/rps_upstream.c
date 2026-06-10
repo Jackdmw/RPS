@@ -140,10 +140,11 @@ rps_upstream_block(rps_conf_t *cf, rps_command_t *cmd, void *conf)
         return "init free_peers array failed";
     }
 
-    ucf->keepalive          = RPS_CONF_UNSET_UINT;
-    ucf->keepalive_timeout  = RPS_CONF_UNSET_MSEC;
-    ucf->keepalive_requests = RPS_CONF_UNSET_UINT;
-    ucf->select_peer        = rps_upstream_select_peer_wrr;
+    ucf->keepalive                 = RPS_CONF_UNSET_UINT;
+    ucf->keepalive_timeout          = RPS_CONF_UNSET_MSEC;
+    ucf->keepalive_requests         = RPS_CONF_UNSET_UINT;
+    ucf->free_upstream_connections  = NULL;
+    ucf->select_peer               = rps_upstream_select_peer_wrr;
 
     cf->cmd_type = RPS_HTTP_UPS_CONF;
     cf->ctx      = ucf;
@@ -327,34 +328,123 @@ rps_upstream_init_peers(rps_upstream_conf_t *ucf)
 }
 
 
-/**
- * 根据u_peer_addr 进行dns以及建立连接(根据dns情况可能阻塞也可能不阻塞)
+/*
+ * 获取一个 upstream 后端连接。
+ *
+ * 优先从 ucf->free_upstream_connections 空闲链表取（复用已分配的内存），
+ * 链表空时才从 cycle->pool 新分配。每个 upstream 块独立管理自己的连接池。
+ * ucf 为 NULL 时（无 upstream 块的直连代理），每次都新分配。
+ */
+static rps_connection_t *
+rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
+                            rps_upstream_conf_t *ucf)
+{
+    rps_connection_t *c;
+
+    /* 先从 upstream 块的空闲链表取 */
+    if (ucf != NULL && ucf->free_upstream_connections != NULL) {
+        c = ucf->free_upstream_connections;
+        ucf->free_upstream_connections = c->data;  /* c->data 存下一空闲节点 */
+
+        /* 重置事件状态（handler 在调用处设置，data 在使用时设置） */
+        rps_memzero(c->read,  sizeof(rps_event_t));
+        rps_memzero(c->write, sizeof(rps_event_t));
+
+        c->read->data  = c;
+        c->read->log   = log;
+        c->read->write = 0;
+
+        c->write->data  = c;
+        c->write->log   = log;
+        c->write->write = 1;
+
+        c->data = NULL;
+        return c;
+    }
+
+    /* 空闲链表空，新分配 */
+    {
+        rps_event_t *read, *write;
+
+        c     = rps_pcalloc(cycle->pool, sizeof(rps_connection_t));
+        read  = rps_pcalloc(cycle->pool, sizeof(rps_event_t));
+        write = rps_pcalloc(cycle->pool, sizeof(rps_event_t));
+
+        if (c == NULL || read == NULL || write == NULL) return NULL;
+
+        c->read  = read;
+        c->write = write;
+        c->cycle = cycle;
+
+        read->data  = c;
+        read->log   = log;
+        read->write = 0;
+
+        write->data  = c;
+        write->log   = log;
+        write->write = 1;
+
+        return c;
+    }
+}
+
+/*
+ * 归还 upstream 后端连接到所属 upstream 块的空闲链表。
+ * 关闭 fd、清理 epoll 事件和定时器，然后将连接对象挂入空闲链表供后续复用。
+ * ucf 为 NULL 时（无 upstream 块的直连代理），连接直接泄漏（由 cycle->pool 回收）。
+ */
+void
+rps_upstream_close_peer_conn(rps_connection_t *c, rps_upstream_conf_t *ucf)
+{
+    if (c == NULL) return;
+
+    if (c->fd > 0) {
+        if (c->cycle != NULL && c->cycle->event_engine != NULL) {
+            if (c->read  != NULL && c->read->active)
+                c->cycle->event_engine->del_event(c->read,  RPS_READ_EVENT);
+            if (c->write != NULL && c->write->active)
+                c->cycle->event_engine->del_event(c->write, RPS_WRITE_EVENT);
+        }
+
+        if (c->read  != NULL) { rps_event_del_timer(c->read);  c->read->active  = 0; }
+        if (c->write != NULL) { rps_event_del_timer(c->write); c->write->active = 0; }
+
+        close(c->fd);
+        c->fd = 0;
+    }
+
+    /* 放入对应 upstream 块的空闲链表（通过 c->data 串联），ucf 为 NULL 则跳过 */
+    if (ucf != NULL) {
+        c->data = ucf->free_upstream_connections;
+        ucf->free_upstream_connections = c;
+    }
+}
+
+/*
+ * 发起非阻塞 connect 到 u->peer_addr。
+ * 使用独立分配的后端连接。
  */
 static void
 rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
 {
-    int                     fd;
-    struct addrinfo         hints, *res, *rp;
-    char                    host_buf[256], port_buf[8];
-    size_t                  host_len;
-    int                     flags;
+    int              fd;
+    struct addrinfo  hints, *res, *rp;
+    char             host_buf[256], port_buf[8];
+    size_t           host_len;
 
     fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        return;
+    if (fd < 0) return;
+
+    {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
-    flags = fcntl(fd, F_GETFL, 0);
-    if (flags != -1) {
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
+
     host_len = u->peer_addr.host.len;
-    if (host_len >= sizeof(host_buf)) {
-        host_len = sizeof(host_buf) - 1;
-    }
+    if (host_len >= sizeof(host_buf)) host_len = sizeof(host_buf) - 1;
     memcpy(host_buf, u->peer_addr.host.data, host_len);
     host_buf[host_len] = '\0';
-
-    snprintf(port_buf, sizeof(port_buf), "%u", (unsigned int)u->peer_addr.port);
+    snprintf(port_buf, sizeof(port_buf), "%u", (unsigned)u->peer_addr.port);
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family   = AF_UNSPEC;
@@ -369,17 +459,13 @@ rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
         if (errno == EINPROGRESS) break;
     }
-
     freeaddrinfo(res);
 
     if (rp == NULL) { close(fd); return; }
 
-    u->peer = rps_get_connection(r->cycle, r->cycle->log,
-                                  r->connection->listenling);
-    if (u->peer == NULL) { 
-        close(fd); 
-        return; 
-    }
+    u->peer = rps_upstream_new_peer_conn(r->cycle, r->cycle->log,
+                                          u->upstream_conf);
+    if (u->peer == NULL) { close(fd); return; }
     u->peer->fd = fd;
 }
 
@@ -609,6 +695,7 @@ rps_upstream_finalize(rps_http_request_t *r, rps_int_t rc)
 {
     rps_upstream_t   *u;
     rps_connection_t *c;
+    rps_int_t         send_rc = RPS_OK;
 
     u = r->upstream;
     if (u == NULL) {
@@ -619,9 +706,14 @@ rps_upstream_finalize(rps_http_request_t *r, rps_int_t rc)
 
     c = r->connection;
 
+    /*
+     * 上游失败：向客户端发送 502 错误响应。
+     * 必须检查返回值：若 EAGAIN，写事件已注册 (data = r)，
+     * 此时不可销毁 r，交由 write_filter_continue 善后。
+     */
     if (rc != RPS_OK && c && c->fd > 0) {
         r->headers_out.status.value = (rps_str_t)rps_string("502 Bad Gateway");
-        rps_http_send_response(r);
+        send_rc = rps_http_send_response(r);
     }
 
     /* 归还或关闭后端连接 */
@@ -642,6 +734,15 @@ rps_upstream_finalize(rps_http_request_t *r, rps_int_t rc)
     }
 
     r->upstream = NULL;
+
+    /*
+     * send_rc == RPS_AGAIN 表示 502 响应尚未发送完毕，
+     * write_filter_continue 回调会在写就绪后 finalize r。
+     * 此时上游已完全清理，r 留给写事件回调销毁。
+     */
+    if (send_rc == RPS_AGAIN) {
+        return;
+    }
 
     rps_http_finalize_request(r, rc);
     if (c) rps_http_complete_request(c);
@@ -670,7 +771,7 @@ rps_upstream_cache_idle_handler(rps_event_t *ev)
      */
     ucf = peer->data;
     if (ucf == NULL) {
-        rps_free_connection(peer);
+        rps_upstream_close_peer_conn(peer, NULL);
         return;
     }
 
@@ -687,7 +788,7 @@ rps_upstream_cache_idle_handler(rps_event_t *ev)
     }
 
     rps_event_del_timer(ev);
-    rps_free_connection(peer);
+    rps_upstream_close_peer_conn(peer, ucf);
 }
 
 /*
@@ -740,14 +841,14 @@ rps_upstream_free_peer(rps_upstream_t *u)
         || ucf->free_peers.nelts >= ucf->keepalive)
     {
         /* 不缓存：直接释放 */
-        rps_free_connection(peer);
+        rps_upstream_close_peer_conn(peer, ucf);
         return;
     }
 
     /* 放入缓存栈顶 */
     cached = rps_array_push(&ucf->free_peers);
     if (cached == NULL) {
-        rps_free_connection(peer);
+        rps_upstream_close_peer_conn(peer, ucf);
         return;
     }
 
