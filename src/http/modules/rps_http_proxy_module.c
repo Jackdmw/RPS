@@ -35,10 +35,12 @@ static rps_int_t rps_http_proxy_create_request(rps_http_request_t *r,
 static rps_int_t rps_http_proxy_process_header(rps_http_request_t *r,
                                                 rps_upstream_t *u);
 
-/* 内部辅助 */
 static rps_int_t rps_http_proxy_build_request(rps_http_request_t *r,
     rps_http_proxy_loc_conf_t *plcf, rps_pool_t *pool,
     u_char **buf_out, size_t *len_out);
+
+/* proxy 专用写事件续传：header 发送完毕后恢复 upstream 读取 */
+static void rps_http_proxy_header_write_continue(rps_event_t *ev);
 
 
 rps_command_t rps_http_proxy_module_commands[] = {
@@ -373,8 +375,8 @@ rps_conf_set_proxy_header(rps_conf_t *cf, rps_command_t *cmd, void *conf)
 
 /*
  * 构造要发送到后端的 HTTP 请求（直接写入 buffer，零中间结构）
- * TODO: 1. 目前没有处理header的重复性，后面再集中考虑，预计使用hash判断。
- *       2. http_version 目前实际上算硬编码1.1
+ * TODO: 
+ * 1. 目前没有处理header的重复性，后面再集中考虑，预计使用hash判断。
  */
 static rps_int_t
 rps_http_proxy_build_request(rps_http_request_t *r,
@@ -474,70 +476,6 @@ rps_http_proxy_build_request(rps_http_request_t *r,
 }
 
 
-
-/*
- * 创建非阻塞 socket 并发起连接到后端。
- * 返回 fd（已设为非阻塞，connect 已发起），失败返回 -1。
- */
-static rps_int_t
-rps_http_proxy_connect_upstream(rps_http_proxy_loc_conf_t *plcf)
-{
-    int                     fd;
-    struct addrinfo         hints, *res, *rp;
-    char                    host_buf[256];
-    char                    port_buf[8];
-    int                     flags;
-
-    if (plcf->upstream_host.len >= sizeof(host_buf)) {
-        return -1;
-    }
-
-    memcpy(host_buf, plcf->upstream_host.data, plcf->upstream_host.len);
-    host_buf[plcf->upstream_host.len] = '\0';
-
-    snprintf(port_buf, sizeof(port_buf), "%u", (unsigned int)plcf->upstream_port);
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if (getaddrinfo(host_buf, port_buf, &hints, &res) != 0) {
-        return -1;
-    }
-
-    fd = -1;
-    for (rp = res; rp != NULL; rp = rp->ai_next) {
-        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (fd < 0) {
-            continue;
-        }
-
-        /* 设为非阻塞 */
-        flags = fcntl(fd, F_GETFL, 0);
-        if (flags != -1) {
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        }
-
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
-            /* 立即连接成功（本地或同一机器） */
-            break;
-        }
-        if (errno == EINPROGRESS) {
-            /* 正常的非阻塞连接：fd 已发起，等待可写 */
-            break;
-        }
-
-        close(fd);
-        fd = -1;
-    }
-
-    freeaddrinfo(res);
-
-    return fd;
-}
-
-
-
 /*
  * CONTENT_PHASE handler：启动非阻塞代理流程（使用 upstream 层）
  */
@@ -632,12 +570,14 @@ rps_http_proxy_create_request(rps_http_request_t *r, rps_upstream_t *u)
 
 /*
  * upstream 回调：解析后端 HTTP 响应头
- * 找到 \r\n\r\n 后转发状态行+头到客户端
+ * 找到 \r\n\r\n 后构造 RPS 响应头 → 同步发送；若 EAGAIN 则挂起，
+ * 由 proxy_header_write_continue 在写就绪后恢复 upstream 读取。
  */
 static rps_int_t
 rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
 {
-    u_char  *p, *end;
+    u_char   *p, *end;
+    rps_int_t wrc;
 
     p   = u->response_buf->pos;
     end = u->response_buf->last;
@@ -648,8 +588,23 @@ rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
             /* 头部完整，移动到 body 起始 */
             u->response_buf->pos = p + 4;
 
-            /* 转发响应头给客户端（简化：直接用默认 200 OK） */
-            rps_http_send_header(r);
+            /* 构造并发送 RPS 响应头 */
+            wrc = rps_http_send_header(r);
+
+            if (wrc == RPS_AGAIN) {
+                /*
+                 * 客户端 socket 暂不可写：覆盖 write_filter 注册的
+                 * rps_http_write_filter_continue，改为 proxy 专用续传
+                 * （写入完成后恢复 upstream 读取，而非 finalize request）。
+                 */
+                r->connection->write->handler
+                    = rps_http_proxy_header_write_continue;
+                return RPS_AGAIN;
+            }
+
+            if (wrc != RPS_OK) {
+                return RPS_ERROR;
+            }
 
             return RPS_OK;
         }
@@ -659,6 +614,59 @@ rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
     return RPS_AGAIN;
 }
 
+
+/*
+ * proxy 专用写事件续传回调。
+ *
+ * rps_http_send_header → write_filter 在 EAGAIN 时默认注册
+ * rps_http_write_filter_continue（会 finalize request），
+ * 但 proxy 路径下 request 仍被 upstream 引用，不可销毁。
+ * 此回调替代之：发送完毕后恢复 upstream 读取，仅在出错时 finalize。
+ */
+static void
+rps_http_proxy_header_write_continue(rps_event_t *ev)
+{
+    rps_http_request_t *r;
+    rps_upstream_t     *u;
+    rps_connection_t   *c;
+    rps_int_t           rc;
+
+    r = ev->data;
+    if (r == NULL || r->upstream == NULL) {
+        return;
+    }
+    u = r->upstream;
+    c = r->connection;
+
+    if (ev->timedout) {
+        rps_upstream_finalize(r, RPS_ERROR);
+        return;
+    }
+
+    rc = rps_http_write_filter(r);
+
+    if (rc == RPS_OK) {
+        /* 响应头已全部发出：清理写事件，恢复 upstream 读取 */
+        r->cycle->event_engine->del_event(c->write, RPS_WRITE_EVENT);
+        c->write->active = 0;
+        rps_event_del_timer(ev);
+
+        if (r->cycle->event_engine->add_event(u->peer->read,
+                                              RPS_READ_EVENT) != RPS_OK) {
+            rps_upstream_finalize(r, RPS_ERROR);
+            return;
+        }
+        rps_event_add_timer(u->peer->read, u->read_timeout);
+    } else if (rc == RPS_ERROR) {
+        rps_upstream_finalize(r, RPS_ERROR);
+    } else {
+        /*
+         * RPS_AGAIN: write_filter 重新注册了 rps_http_write_filter_continue，
+         * 必须再次覆盖为 proxy 专用续传，否则下次写就绪会销毁 request。
+         */
+        c->write->handler = rps_http_proxy_header_write_continue;
+    }
+}
 
 #if 0
 static void
@@ -885,5 +893,65 @@ rps_http_proxy_cleanup(rps_http_request_t *r, rps_int_t status)
         rps_http_finalize_request(r, status);
         rps_http_complete_request(c);
     }
+}
+/*
+ * 创建非阻塞 socket 并发起连接到后端。
+ * 返回 fd（已设为非阻塞，connect 已发起），失败返回 -1。
+ */
+static rps_int_t
+rps_http_proxy_connect_upstream(rps_http_proxy_loc_conf_t *plcf)
+{
+    int                     fd;
+    struct addrinfo         hints, *res, *rp;
+    char                    host_buf[256];
+    char                    port_buf[8];
+    int                     flags;
+
+    if (plcf->upstream_host.len >= sizeof(host_buf)) {
+        return -1;
+    }
+
+    memcpy(host_buf, plcf->upstream_host.data, plcf->upstream_host.len);
+    host_buf[plcf->upstream_host.len] = '\0';
+
+    snprintf(port_buf, sizeof(port_buf), "%u", (unsigned int)plcf->upstream_port);
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(host_buf, port_buf, &hints, &res) != 0) {
+        return -1;
+    }
+
+    fd = -1;
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (fd < 0) {
+            continue;
+        }
+
+        /* 设为非阻塞 */
+        flags = fcntl(fd, F_GETFL, 0);
+        if (flags != -1) {
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+
+        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            /* 立即连接成功（本地或同一机器） */
+            break;
+        }
+        if (errno == EINPROGRESS) {
+            /* 正常的非阻塞连接：fd 已发起，等待可写 */
+            break;
+        }
+
+        close(fd);
+        fd = -1;
+    }
+
+    freeaddrinfo(res);
+
+    return fd;
 }
 #endif /*old proxy handlers */
