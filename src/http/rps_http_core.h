@@ -153,5 +153,6 @@ rps_int_t rps_http_send_header(rps_http_request_t *r);
 rps_int_t rps_http_send_body(rps_http_request_t *r, rps_buf_t *body);
 rps_int_t rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out);
 rps_int_t rps_http_send_response(rps_http_request_t *r);
+rps_int_t rps_http_write_filter(rps_http_request_t *r);
 
 #endif
