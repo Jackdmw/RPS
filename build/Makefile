@@ -729,6 +729,30 @@ src/http/rps_http_response.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_http_response.c.s
 .PHONY : src/http/rps_http_response.c.s
 
+src/http/rps_upstream.o: src/http/rps_upstream.c.o
+.PHONY : src/http/rps_upstream.o
+
+# target to build an object file
+src/http/rps_upstream.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_upstream.c.o
+.PHONY : src/http/rps_upstream.c.o
+
+src/http/rps_upstream.i: src/http/rps_upstream.c.i
+.PHONY : src/http/rps_upstream.i
+
+# target to preprocess a source file
+src/http/rps_upstream.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_upstream.c.i
+.PHONY : src/http/rps_upstream.c.i
+
+src/http/rps_upstream.s: src/http/rps_upstream.c.s
+.PHONY : src/http/rps_upstream.s
+
+# target to generate assembly for a file
+src/http/rps_upstream.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_upstream.c.s
+.PHONY : src/http/rps_upstream.c.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -813,6 +837,9 @@ help:
 	@echo "... src/http/rps_http_response.o"
 	@echo "... src/http/rps_http_response.i"
 	@echo "... src/http/rps_http_response.s"
+	@echo "... src/http/rps_upstream.o"
+	@echo "... src/http/rps_upstream.i"
+	@echo "... src/http/rps_upstream.s"
 .PHONY : help
 
 

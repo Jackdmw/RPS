@@ -319,16 +319,7 @@ upstream_finalize(r, rc):
   4. complete_request(c)                // 连接收尾
 ```
 
-### 7.5 与现有代理代码的区别
-
-| 现有 | 新设计 |
-|------|--------|
-| 代理模块写全部事件回调 | 事件回调在 upstream 层，代理只写 create_request / process_header |
-| 显式 state 变量（proxy_state=1,2,3） | 隐式状态，通过换 handler 函数指针 |
-| 代理模块管理定时器 | upstream 层统一管理 |
-| 代理模块直接 free(uc) | upstream 层通过 keepalive 缓存管理 |
-
-### 7.6 keepalive 缓存
+### 7.5 keepalive 缓存
 
 见第 9 章。
 

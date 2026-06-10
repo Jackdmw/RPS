@@ -49,6 +49,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o.d"
   "CMakeFiles/RPS.dir/src/http/rps_http_response.c.o"
   "CMakeFiles/RPS.dir/src/http/rps_http_response.c.o.d"
+  "CMakeFiles/RPS.dir/src/http/rps_upstream.c.o"
+  "CMakeFiles/RPS.dir/src/http/rps_upstream.c.o.d"
   "RPS"
   "RPS.pdb"
 )

@@ -82,8 +82,12 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
  /home/jack/RPS/src/http/rps_http_core.h \
  /home/jack/RPS/src/core/rps_conf_file.h \
  /home/jack/RPS/src/core/rps_string.h \
- /home/jack/RPS/src/http/rps_http_phases.h \
+ /home/jack/RPS/src/http/rps_upstream.h \
  /home/jack/RPS/src/core/rps_array.h \
+ /home/jack/RPS/src/core/rps_connection.h \
+ /home/jack/RPS/src/core/rps_palloc.h \
+ /home/jack/RPS/src/core/rps_module.h \
+ /home/jack/RPS/src/http/rps_http_phases.h \
  /home/jack/RPS/src/http/rps_http_parse.h \
  /home/jack/RPS/src/http/modules/rps_http_core_module.h \
  /usr/include/signal.h \
@@ -118,5 +122,4 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
  /usr/include/endian.h /usr/include/x86_64-linux-gnu/bits/byteswap.h \
  /usr/include/x86_64-linux-gnu/bits/uintn-identity.h \
  /usr/include/arpa/inet.h \
- /home/jack/RPS/src/http/modules/rps_http_proxy_module.h \
- /home/jack/RPS/src/core/rps_module.h
+ /home/jack/RPS/src/http/modules/rps_http_proxy_module.h

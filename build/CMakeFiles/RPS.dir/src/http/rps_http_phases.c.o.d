@@ -100,7 +100,10 @@ CMakeFiles/RPS.dir/src/http/rps_http_phases.c.o: \
  /home/jack/RPS/src/event/rps_event.h /home/jack/RPS/src/core/rps_log.h \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
  /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h \
- /home/jack/RPS/src/http/modules/rps_http_core_module.h \
+ /home/jack/RPS/src/http/rps_upstream.h \
+ /home/jack/RPS/src/core/rps_connection.h \
+ /home/jack/RPS/src/core/rps_palloc.h \
  /home/jack/RPS/src/core/rps_module.h \
- /home/jack/RPS/src/core/rps_palloc.h /home/jack/RPS/src/core/rps_buf.h \
- /usr/include/netinet/in.h /usr/include/x86_64-linux-gnu/bits/in.h
+ /home/jack/RPS/src/http/modules/rps_http_core_module.h \
+ /home/jack/RPS/src/core/rps_buf.h /usr/include/netinet/in.h \
+ /usr/include/x86_64-linux-gnu/bits/in.h

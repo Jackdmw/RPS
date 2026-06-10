@@ -1,6 +1,7 @@
-CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o: \
- /home/jack/RPS/src/http/modules/rps_http_core_module.c \
- /usr/include/stdc-predef.h /home/jack/RPS/src/http/rps_http_core.h \
+CMakeFiles/RPS.dir/src/http/modules/rps_http_upstream_module.c.o: \
+ /home/jack/RPS/src/http/modules/rps_http_upstream_module.c \
+ /usr/include/stdc-predef.h \
+ /home/jack/RPS/src/http/modules/rps_http_upstream_module.h \
  /home/jack/RPS/src/core/rps_config.h /usr/include/stdio.h \
  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
  /usr/include/features.h /usr/include/features-time64.h \
@@ -82,11 +83,10 @@ CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o: \
  /usr/include/x86_64-linux-gnu/asm/sockios.h \
  /usr/include/asm-generic/sockios.h \
  /usr/include/x86_64-linux-gnu/bits/types/struct_osockaddr.h \
- /home/jack/RPS/src/core/rps_conf_file.h \
- /home/jack/RPS/src/core/rps_config.h \
- /home/jack/RPS/src/core/rps_string.h /home/jack/RPS/src/core/rps_cycle.h \
- /home/jack/RPS/src/core/rps_list.h /home/jack/RPS/src/core/rps_array.h \
+ /home/jack/RPS/src/core/rps_string.h \
+ /home/jack/RPS/src/core/rps_config.h /home/jack/RPS/src/core/rps_array.h \
  /home/jack/RPS/src/core/rps_palloc.h /home/jack/RPS/src/core/rps_log.h \
+ /home/jack/RPS/src/core/rps_array.h /home/jack/RPS/src/core/rps_string.h \
  /home/jack/RPS/src/core/rps_file.h \
  /usr/include/x86_64-linux-gnu/sys/stat.h \
  /usr/include/x86_64-linux-gnu/bits/stat.h \
@@ -95,16 +95,16 @@ CMakeFiles/RPS.dir/src/http/modules/rps_http_core_module.c.o: \
  /usr/include/x86_64-linux-gnu/bits/fcntl-linux.h \
  /home/jack/RPS/src/core/rps_module.h \
  /home/jack/RPS/src/core/rps_conf_file.h \
+ /home/jack/RPS/src/core/rps_cycle.h /home/jack/RPS/src/core/rps_list.h \
+ /home/jack/RPS/src/core/rps_module.h \
  /home/jack/RPS/src/core/rps_connection.h \
  /home/jack/RPS/src/event/rps_event.h /home/jack/RPS/src/core/rps_log.h \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
- /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h \
- /home/jack/RPS/src/http/rps_upstream.h \
- /home/jack/RPS/src/core/rps_array.h \
- /home/jack/RPS/src/core/rps_connection.h \
- /home/jack/RPS/src/core/rps_palloc.h \
- /home/jack/RPS/src/core/rps_module.h \
+ /home/jack/RPS/src/core/rps_buf.h \
  /home/jack/RPS/src/http/modules/rps_http_core_module.h \
  /home/jack/RPS/src/http/rps_http_phases.h \
- /home/jack/RPS/src/core/rps_buf.h /usr/include/netinet/in.h \
- /usr/include/x86_64-linux-gnu/bits/in.h /usr/include/arpa/inet.h
+ /home/jack/RPS/src/http/rps_http_core.h \
+ /home/jack/RPS/src/core/rps_conf_file.h \
+ /home/jack/RPS/src/http/rps_upstream.h \
+ /home/jack/RPS/src/core/rps_connection.h \
+ /home/jack/RPS/src/core/rps_palloc.h

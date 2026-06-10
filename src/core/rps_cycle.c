@@ -55,7 +55,7 @@ rps_init_cycle(rps_cycle_t *old_cycle){
     for ( int i = 0; i < rps_max_module; i++){
         cycle -> conf_ctx[i] = NULL;
     }
-
+    
     cycle->modules = old_cycle -> modules;
     cycle -> modules_n = old_cycle -> modules_n;
 
