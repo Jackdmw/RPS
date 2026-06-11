@@ -36,7 +36,7 @@ rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
     }
     return RPS_OK;
 }
-#ifdef 0
+#ifdef _THROWN
 /**
  * 这个函数应该废弃，现在的实现中，listensocket是交给connection对象了的
  * 释放交给connection对象去做
@@ -68,9 +68,7 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         return NULL;
     }
     else {
-        new_conn = cycle -> free_connection;
-        cycle -> free_connection = cycle -> free_connection -> data;
-        
+        new_conn = cycle -> free_connection;        
         new_conn->close = 0;
         new_conn ->sent = 0;
         new_conn -> listenling = listening;
@@ -83,7 +81,7 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         if(new_conn -> pool == NULL){
             return NULL;
         }
-
+        cycle -> free_connection = cycle -> free_connection -> data;
         return new_conn;
     }
 }
@@ -106,9 +104,16 @@ void rps_close_connection(rps_connection_t *c){
     }
 
     /* 清除定时器，防止连接回收后残留的 timer 误触发新连接的 handler */
-    if (c->read  != NULL) rps_event_del_timer(c->read);
-    if (c->write != NULL) rps_event_del_timer(c->write);
-
+    if (c->read  != NULL) {
+        rps_event_del_timer(c->read);
+        c->read->active  = 0;
+        c->read->timedout  = 0; 
+    }
+    if (c->write != NULL) {
+        rps_event_del_timer(c->write);
+        c->write->active = 0; 
+        c->write->timedout = 0;
+    }
     if ( c -> pool != NULL){
         rps_destroy_pool(c -> pool);
         c -> pool = NULL;
@@ -117,8 +122,6 @@ void rps_close_connection(rps_connection_t *c){
     rps_memzero(&c->sockaddr, sizeof(struct sockaddr));
     rps_memzero(&c->addr_text, sizeof(rps_str_t));
 
-    if (c->read  != NULL) { c->read->active  = 0; c->read->timedout  = 0; }
-    if (c->write != NULL) { c->write->active = 0; c->write->timedout = 0; }
 }
 
 rps_int_t
