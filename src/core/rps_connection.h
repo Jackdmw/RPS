@@ -48,11 +48,13 @@ struct rps_connection_s {
 
     void               *data;       /*指向具体请求结构体,或者，对于空闲连接对象，指向下一个空闲连接对象*/
 
-    rps_pool_t         *pool;       /*连接专属内存池*/
-    rps_listening_t    *listenling; /* 监听端口*/
+    rps_pool_t         *pool;             /* 连接专属内存池（仅客户端连接，后端连接为 NULL） */
+    rps_listening_t    *listenling;       /* 监听端口 */
 
-    unsigned            sent:1;     /*标记是否发送数据*/
-    unsigned            close:1;    /*标记是否需要关闭*/
+    rps_uint_t          upstream_requests; /* 此后端连接已服务的请求总数（keepalive_requests 限制） */
+
+    unsigned            sent:1;           /* 标记是否发送数据 */
+    unsigned            close:1;          /* 标记是否需要关闭 */
 
 };
 
