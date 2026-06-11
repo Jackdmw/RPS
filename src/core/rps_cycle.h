@@ -33,8 +33,9 @@ struct rps_cycle_s {
     rps_str_t                 use;              // 事件机制
     rps_uint_t                if_pthread:1;     // 多线程？
 
-    rps_connection_t         *connections;      //worker 进程持有,一个连接池
-    rps_connection_t         *free_connection;
+    rps_connection_t         *connections;               // 客户端连接池
+    rps_connection_t         *free_connection;            // 客户端连接空闲链表
+    rps_connection_t         *free_upstream_connections;  // 后端连接对象空闲链表（跨 upstream 块共享）
     rps_event_t              *reads;
     rps_event_t              *writes;
 
