@@ -53,4 +53,18 @@ rps_int_t rps_atoi(u_char * line,size_t n);
     }                                                   \
 }
 
+/*
+ * djb2 哈希，大小写不敏感（适合 HTTP header key）。
+ * 用法：rps_uint_t h; rps_hash_str_lc(key, h);
+ */
+#define rps_hash_str_lc(str, hash) {                     \
+    rps_uint_t _i;                                       \
+    (hash) = 5381;                                       \
+    for (_i = 0; _i < (str).len; _i++) {                 \
+        u_char _c = (str).data[_i];                      \
+        if (_c >= 'A' && _c <= 'Z') _c += ('a' - 'A');   \
+        (hash) = ((hash) << 5) + (hash) + _c;             \
+    }                                                     \
+}
+
 #endif
