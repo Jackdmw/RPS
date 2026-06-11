@@ -137,7 +137,7 @@ struct rps_http_request_s {
 
 // 创建、销毁
 rps_http_request_t *rps_http_create_request(rps_connection_t *c);
-void rps_http_close_request(rps_http_request_t *r);
+void rps_http_release_request(rps_http_request_t *r);
 void rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc);
 void rps_http_complete_request(rps_connection_t *c);
 void rps_http_wait_request_handler(rps_event_t *ev);

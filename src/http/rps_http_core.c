@@ -90,7 +90,7 @@ rps_http_create_request(rps_connection_t *c)
  * 释放请求资源（upstream + pool）
  */
 void
-rps_http_close_request(rps_http_request_t *r)
+rps_http_release_request(rps_http_request_t *r)
 {
     rps_pool_t *pool;
 
@@ -146,7 +146,7 @@ rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc)
         keepalive = 0;
     }
 
-    rps_http_close_request(r);
+    rps_http_release_request(r);
 
     if (c) {
         c->close = !keepalive;
