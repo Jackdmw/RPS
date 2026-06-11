@@ -418,8 +418,10 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     sigaction(SIGTERM, &sa, NULL);
 
     /*
-     * 线程阻塞模式（if_pthread == 1）：简单 accept + 每连接一线程，
-     * 保留原有逻辑。
+     * 多线程模式：简单 accept + 每连接一线程，
+     * 只需要做websocket 和 http 功能实现，后面考虑怎么利用现有的事件机制实现
+     * 
+     * 尽可能地复用，减少心智负担。
      */
     if (cycle->if_pthread == 1) {
         listening = cycle->listening.elts;
