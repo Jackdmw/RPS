@@ -6,7 +6,7 @@
 
 #define RPS_CONF_BUFFER 4096
 
-#define rps_is_a_letter(word) ((word<='Z'&&word>='A')||(word <= 'z' && word >= 'a')||(word<= '9'&&word>='0')||word == '_'||word == '/'||word == '.'||word == ':'||word == '='||word == '-')
+#define rps_is_a_letter(word) (((word)<='Z'&&(word)>='A')||((word) <= 'z' && (word) >= 'a')||((word)<= '9'&&(word)>='0')||(word) == '_'||(word) == '/'||(word) == '.'||(word) == ':'||(word) == '='||(word) == '-')
 #define rps_word_push(cf,length,str) {\
     rps_str_t * word_str = rps_array_push(cf->args);\
     word_str->len = length;\
@@ -63,7 +63,7 @@ rps_int_t rps_conf_parse(rps_conf_t *cf){
             }
             if (st == RPS_CONF_BLOCK_START){
                 is_block ++;
-                rps_log_error(RPS_LOG_DEBUG,cf->log,0,"block ++, now is :%l",is_block);
+                rps_log_error(RPS_LOG_DEBUG,cf->log,0,"block ++, now is :%ld",is_block);
                 break;
             }
             if (st == RPS_CONF_BLOCK_END){
@@ -419,8 +419,8 @@ rps_conf_handler(rps_conf_t* cf,rps_int_t st)
 
         }
     }
-    name->data[name->len] = '\0';
-    rps_log_error(RPS_LOG_ERR,cf->log,0,"command \"%s\" not found,FILE:%s,LINE:%lu",name->data,cf->file_name.data,cf->conf_file->line);
+    rps_log_error(RPS_LOG_ERR,cf->log,0,"command \"%.*s\" not found,FILE:%s,LINE:%lu",
+                  (int)name->len, name->data, cf->file_name.data, cf->conf_file->line);
     return RPS_ERROR;
 }
 char * rps_conf_set_flag_slot(rps_conf_t *cf,rps_command_t *cmd,void * conf){

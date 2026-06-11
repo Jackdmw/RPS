@@ -6,5 +6,5 @@ C_DEFINES =
 
 C_INCLUDES = -I/home/jack/RPS/src
 
-C_FLAGS = -g
+C_FLAGS = -fsanitize=address -g -O0 -g
 

@@ -52,7 +52,7 @@ rps_init_cycle(rps_cycle_t *old_cycle){
         rps_destroy_pool(pool);
         return NULL;
     }
-    for ( int i = 0; i < rps_max_module; i++){
+    for ( i = 0; i < rps_max_module; i++){
         cycle -> conf_ctx[i] = NULL;
     }
     
@@ -60,7 +60,7 @@ rps_init_cycle(rps_cycle_t *old_cycle){
     cycle -> modules_n = old_cycle -> modules_n;
 
 
-    for (int i =0; cycle->modules[i]; i++)
+    for (i = 0; cycle->modules[i]; i++)
     {
         if (cycle->modules[i]->type != RPS_CORE_MODULE)
             continue;
@@ -99,6 +99,12 @@ rps_init_cycle(rps_cycle_t *old_cycle){
     
     
     conf.conf_file->file.fd = open(cycle->conf_file.data,O_RDONLY);
+    if (conf.conf_file->file.fd == RPS_INVALID_FILE) {
+        rps_log_error(RPS_LOG_ERR, log, 0, "failed to open config file \"%s\"",
+                      cycle->conf_file.data);
+        rps_destroy_pool(pool);
+        return NULL;
+    }
     conf.conf_file->file.name.len = cycle->conf_file.len;
     conf.conf_file->file.name.data = cycle->conf_file.data;
     conf.conf_file->file.offset = 0;
@@ -110,6 +116,7 @@ rps_init_cycle(rps_cycle_t *old_cycle){
 
     rps_log_error(RPS_LOG_DEBUG,log,0,"conf parse start,file:%s",cycle->conf_file.data);
     if(rps_conf_parse(&conf)==RPS_ERROR){
+        close(conf.conf_file->file.fd);
         rps_destroy_pool(pool);
         return NULL;
     }
@@ -121,6 +128,7 @@ rps_init_cycle(rps_cycle_t *old_cycle){
         module = cycle -> modules[i] -> ctx;
         if (module->init_conf != NULL){
             if(module -> init_conf(cycle)!=NULL){
+                close(conf.conf_file->file.fd);
                 rps_destroy_pool(pool);
                 rps_log_error(RPS_LOG_ERR,log,0,"init core module failed");
                 return NULL;
@@ -128,5 +136,6 @@ rps_init_cycle(rps_cycle_t *old_cycle){
         } 
     }
 
+    close(conf.conf_file->file.fd);
     return cycle;
 }

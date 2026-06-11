@@ -281,10 +281,12 @@ rps_conf_set_proxy_pass(rps_conf_t *cf, rps_command_t *cmd, void *conf)
 {
     rps_http_proxy_loc_conf_t  *plcf = conf;
     rps_str_t                  *values;
-    rps_str_t                   url;
+    rps_str_t                   url, tmp_host, tmp_uri;
+    rps_pool_t                 *pool;
     u_char                     *p, *start;
     rps_uint_t                  i;
 
+    pool   = cf->pool;
     values = cf->args->elts;
     url    = values[1];
 
@@ -292,7 +294,8 @@ rps_conf_set_proxy_pass(rps_conf_t *cf, rps_command_t *cmd, void *conf)
         return "proxy_pass requires a non-empty URL";
     }
 
-    plcf->proxy_pass = url;
+    /* 复制完整 URL 到 pool */
+    rps_strcpy(plcf->proxy_pass, url, pool);
 
     p = url.data;
     /*跳过协议头,http://*/
@@ -308,8 +311,10 @@ rps_conf_set_proxy_pass(rps_conf_t *cf, rps_command_t *cmd, void *conf)
     while (p < url.data + url.len && *p != ':' && *p != '/') {
         p++;
     }
-    plcf->upstream_host.data = start;
-    plcf->upstream_host.len  = (rps_uint_t)(p - start);
+    /* 暂存 host 信息，随后复制到 pool */
+    tmp_host.data = start;
+    tmp_host.len  = (rps_uint_t)(p - start);
+    rps_strcpy(plcf->upstream_host, tmp_host, pool);
 
     if (p < url.data + url.len && *p == ':') {
         p++;
@@ -323,10 +328,13 @@ rps_conf_set_proxy_pass(rps_conf_t *cf, rps_command_t *cmd, void *conf)
     }
 
     if (p < url.data + url.len && *p == '/') {
-        plcf->upstream_uri.data = p;
-        plcf->upstream_uri.len  = (rps_uint_t)(url.data + url.len - p);
+        /* proxy_pass 带了显式 URI 路径（如 http://backend/api），复制到 pool */
+        tmp_uri.data = p;
+        tmp_uri.len  = (rps_uint_t)(url.data + url.len - p);
+        rps_strcpy(plcf->upstream_uri, tmp_uri, pool);
     } else {
-        plcf->upstream_uri = (rps_str_t)rps_string("/");
+        /* proxy_pass 无路径：保持空串，build_request 时透传原始请求 URI */
+        plcf->upstream_uri = (rps_str_t)rps_null_string;
     }
 
     /*
@@ -366,8 +374,8 @@ rps_conf_set_proxy_header(rps_conf_t *cf, rps_command_t *cmd, void *conf)
         return "proxy_set_header: array push failed";
     }
 
-    h->key   = values[1];
-    h->value = values[2];
+    rps_strcpy(h->key,   values[1], cf->pool);
+    rps_strcpy(h->value, values[2], cf->pool);
 
     return RPS_CONF_OK;
 }
@@ -402,7 +410,12 @@ rps_http_proxy_build_request(rps_http_request_t *r,
     }
     *p++ = ' ';
 
-    p = rps_cpymem(p, plcf->upstream_uri.data, plcf->upstream_uri.len);
+    /* 如果 proxy_pass 未指定 URI 路径，透传原始请求 URI */
+    if (plcf->upstream_uri.data != NULL && plcf->upstream_uri.len > 0) {
+        p = rps_cpymem(p, plcf->upstream_uri.data, plcf->upstream_uri.len);
+    } else {
+        p = rps_cpymem(p, r->uri.data, r->uri.len);
+    }
     if (r->args.len > 0) {
         *p++ = '?';
         p = rps_cpymem(p, r->args.data, r->args.len);
@@ -570,48 +583,127 @@ rps_http_proxy_create_request(rps_http_request_t *r, rps_upstream_t *u)
 
 /*
  * upstream 回调：解析后端 HTTP 响应头
- * 找到 \r\n\r\n 后构造 RPS 响应头 → 同步发送；若 EAGAIN 则挂起，
- * 由 proxy_header_write_continue 在写就绪后恢复 upstream 读取。
+ *
+ * 从 u->response_buf 中解析后端的 status line 和 headers，
+ * 填充 r->headers_out，然后发送给客户端。
+ *
+ * 返回 RPS_OK     — 响应头已成功发送
+ * 返回 RPS_AGAIN  — 数据不足（等下次读）或写阻塞（挂起续传）
+ * 返回 RPS_ERROR  — 解析 / 发送失败
  */
 static rps_int_t
 rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
 {
-    u_char   *p, *end;
+    u_char   *p, *end, *line, *header_end;
     rps_int_t wrc;
 
     p   = u->response_buf->pos;
     end = u->response_buf->last;
 
-    while (p + 3 < end) {
-        if (p[0] == '\r' && p[1] == '\n'
-            && p[2] == '\r' && p[3] == '\n') {
-            /* 头部完整，移动到 body 起始 */
-            u->response_buf->pos = p + 4;
-
-            /* 构造并发送 RPS 响应头 */
-            wrc = rps_http_send_header(r);
-
-            if (wrc == RPS_AGAIN) {
-                /*
-                 * 客户端 socket 暂不可写：覆盖 write_filter 注册的
-                 * rps_http_write_filter_continue，改为 proxy 专用续传
-                 * （写入完成后恢复 upstream 读取，而非 finalize request）。
-                 */
-                r->connection->write->handler
-                    = rps_http_proxy_header_write_continue;
-                return RPS_AGAIN;
+    /* 找 \r\n\r\n 标记头部结束 */
+    header_end = NULL;
+    {
+        u_char *s = p;
+        while (s + 3 < end) {
+            if (s[0] == '\r' && s[1] == '\n'
+                && s[2] == '\r' && s[3] == '\n') {
+                header_end = s;
+                break;
             }
-
-            if (wrc != RPS_OK) {
-                return RPS_ERROR;
-            }
-
-            return RPS_OK;
+            s++;
         }
-        p++;
     }
 
-    return RPS_AGAIN;
+    if (header_end == NULL) {
+        return RPS_AGAIN;   /* 头部不完整，等更多数据 */
+    }
+
+    /* ── 解析 status line ── */
+    line = p;
+    {
+        u_char *status_cr = line;
+        while (status_cr < header_end && *status_cr != '\r') status_cr++;
+        if (status_cr >= header_end) return RPS_ERROR;
+
+        /* 跳过 "HTTP/x.x "，定位状态码+原因短语 */
+        {
+            u_char *sp = line;
+            while (sp < status_cr && *sp != ' ') sp++;
+            if (sp < status_cr) {
+                sp++;  /* 跳过第一个空格 */
+                r->headers_out.status.value.data = sp;
+                r->headers_out.status.value.len  = (rps_uint_t)(status_cr - sp);
+            }
+        }
+
+        /* 跳过 status line 的 \r\n */
+        p = line + (status_cr - line) + 2;
+    }
+
+    /* ── 逐行解析响应头 ── */
+    while (p < header_end) {
+        u_char *cr = p;
+        while (cr < header_end && *cr != '\r') cr++;
+        if (cr >= header_end) break;
+
+        /* 找冒号分隔 key: value */
+        {
+            u_char *colon = p;
+            while (colon < cr && *colon != ':') colon++;
+            if (colon < cr) {
+                rps_str_t key, value;
+                key.data = p;
+                key.len  = (rps_uint_t)(colon - p);
+
+                /* 跳过冒号和空白 */
+                colon++;
+                while (colon < cr && *colon == ' ') colon++;
+                value.data = colon;
+                value.len  = (rps_uint_t)(cr - colon);
+
+                rps_str_lowercase(key);
+
+                /* 填入固定字段，加速后续访问 */
+                if (rps_strcmp_with_cstr(key, "content-type")) {
+                    r->headers_out.content_type.value = value;
+                } else if (rps_strcmp_with_cstr(key, "content-length")) {
+                    r->headers_out.content_length_n.value = value;
+                    rps_http_set_content_length(r,
+                        (size_t)rps_atoi(value.data, value.len));
+                } else if (rps_strcmp_with_cstr(key, "server")) {
+                    r->headers_out.server.value = value;
+                } else {
+                    /* 透传其他 header（Set-Cookie, ETag 等） */
+                    rps_http_add_response_header(r, key, value);
+                }
+            }
+        }
+
+        p = cr + 2;  /* 跳过 \r\n */
+    }
+
+    /* 移动到 body 起始 */
+    u->response_buf->pos = header_end + 4;
+
+    /* 发送响应头给客户端 */
+    wrc = rps_http_send_header(r);
+
+    if (wrc == RPS_AGAIN) {
+        /*
+         * 客户端 socket 暂不可写：覆盖 write_filter 注册的
+         * rps_http_write_filter_continue，改为 proxy 专用续传
+         * （写入完成后恢复 upstream 读取，而非 finalize request）。
+         */
+        r->connection->write->handler
+            = rps_http_proxy_header_write_continue;
+        return RPS_AGAIN;
+    }
+
+    if (wrc != RPS_OK) {
+        return RPS_ERROR;
+    }
+
+    return RPS_OK;
 }
 
 

@@ -209,7 +209,8 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
             }
 
             if (r->uri.len >= lcf->pattern.len
-                && rps_strcmp(r -> uri, lcf -> pattern) == RPS_STRING_EQUAL)
+                && memcmp(r->uri.data, lcf->pattern.data,
+                          lcf->pattern.len) == 0)
             {
                 if (max_match_len < lcf -> pattern.len){
                     max_match_len = lcf -> pattern.len;
@@ -418,7 +419,8 @@ rps_http_init_phase_engine(rps_http_core_main_conf_t *cmcf)
     if (ph == NULL) {
         return RPS_ERROR;
     }
-    printf("ph num is %lu\n",total);
+    rps_log_error(RPS_LOG_DEBUG, pool->log, 0,
+                  "init phase engine, total handlers: %lu", total);
     /*把每个 phase 的 handler 填入展平数组*/
     n = 0;
     for (i = 0; i < RPS_HTTP_PHASE_NUM; i++) {
@@ -508,7 +510,8 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
     ph = cmcf->phase_engine.handlers;
     
     while (ph[r->phase_index].checker) {
-        printf ("request has analyzed successfully, prepare to execute phases handler, index is %lu\n ",r -> phase_index);
+        rps_log_error(RPS_LOG_DEBUG, r->connection->cycle->log, 0,
+                      "execute phase handler, index: %lu", r->phase_index);
 
         rc = ph[r->phase_index].checker(r, &ph[r->phase_index]);
 

@@ -13,6 +13,7 @@
 char *rps_set_server_block(rps_conf_t *cf,rps_command_t *cmd,void *conf);
 char *rps_set_server_name(rps_conf_t *cf,rps_command_t *cmd,void *conf);
 char *rps_set_location_block(rps_conf_t *cf,rps_command_t *cmd,void *conf);
+char *rps_set_listen(rps_conf_t *cf,rps_command_t *cmd,void *conf);
 
 void *rps_http_core_create_main_conf(rps_conf_t * cf);
 void *rps_http_core_create_srv_conf(rps_conf_t *cf);
@@ -38,7 +39,7 @@ rps_command_t rps_http_core_module_commands[] = {
     {
         rps_string("listen"),
         RPS_HTTP_SRV_CONF|RPS_CONF_TAKE1,
-        rps_conf_set_num_slot,
+        rps_set_listen,
         RPS_CONF_BELONG_HTTP_SRV,
         offsetof(rps_http_core_srv_conf_t,port),
         NULL
@@ -96,6 +97,61 @@ rps_module_t   rps_http_core_module = {
     NULL
 };
 
+
+/*
+ * listen <port>;
+ * listen <addr>:<port>;
+ * listen *:<port>;
+ */
+char *
+rps_set_listen(rps_conf_t *cf, rps_command_t *cmd, void *conf)
+{
+    rps_http_core_srv_conf_t  *srv = conf;
+    rps_str_t                 *values;
+    rps_str_t                  arg;
+    u_char                    *p;
+    rps_uint_t                 port;
+
+    values = cf->args->elts;
+    arg    = values[1];
+
+    if (srv->port != RPS_CONF_UNSET_UINT) {
+        rps_log_error(RPS_LOG_ALERT, cf->log, 0,
+                      "\"listen\" has already been set");
+        return "is duplicate";
+    }
+
+    /* 找最后一个 ':' 或 ' ' 之后的部分作为端口 */
+    p = arg.data + arg.len - 1;
+
+    /* 先倒着找 ':' */
+    while (p > arg.data && *p != ':') {
+        p--;
+    }
+
+    if (*p == ':') {
+        /* addr:port 或 *:port 格式 */
+        p++;  /* 跳过冒号 */
+    } else {
+        /* 纯端口格式，从头开始 */
+        p = arg.data;
+    }
+
+    port = 0;
+    while (p < arg.data + arg.len && *p >= '0' && *p <= '9') {
+        port = port * 10 + (rps_uint_t)(*p - '0');
+        p++;
+    }
+
+    if (port == 0 || port > 65535) {
+        rps_log_error(RPS_LOG_ERR, cf->log, 0,
+                      "invalid port in \"listen\" directive");
+        return "invalid port";
+    }
+
+    srv->port = port;
+    return RPS_CONF_OK;
+}
 
 char *rps_set_server_block(rps_conf_t *cf,rps_command_t *cmd,void *conf){
     rps_http_core_main_conf_t               *ccf;
@@ -247,7 +303,7 @@ char *rps_set_location_block(rps_conf_t *cf,rps_command_t *cmd,void *conf){
     } 
     rps_log_error (RPS_LOG_DEBUG, cf -> log, 0, "start");
     loc_cf = new_loc -> loc_conf[rps_http_core_module.ctx_index];
-    loc_cf -> pattern = (rps_str_t)values[1];
+    rps_strcpy(loc_cf->pattern, values[1], pool);
 
     cf -> ctx = new_loc;
     cf -> cmd_type = RPS_HTTP_LOC_CONF;

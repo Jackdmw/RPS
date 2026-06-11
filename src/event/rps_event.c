@@ -147,6 +147,9 @@ rps_event_expire_timers(void)
     now = rps_current_msec();
 
     for (;;) {
+        /* 每次循环重新获取 root，防止 erase 后 root 过期 */
+        root = rps_event_timer_tree.root;
+
         /* 找最小 key 节点 */
         node = root;
         while (node->left != sentinel) {

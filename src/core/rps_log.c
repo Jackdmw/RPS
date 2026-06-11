@@ -1,7 +1,17 @@
 #include "rps_core.h"
 #include "rps_log.h"
 #include "rps_file.h"
-#define rps_strerror(err,p,n) rps_cpymem(p,strerror(err),(size_t)(n))
+static u_char *
+rps_log_strerror(rps_err_t err, u_char *p, size_t n)
+{
+    const char *msg = strerror(err);
+    size_t      len = strlen(msg);
+
+    if (len > n) len = n;
+    return rps_cpymem(p, msg, len);
+}
+
+#define rps_strerror(err, p, n) rps_log_strerror(err, p, n)
 
 static rps_open_file_t  rps_log_stderr_file;
 

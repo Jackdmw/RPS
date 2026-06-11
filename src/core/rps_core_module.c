@@ -120,7 +120,7 @@ rps_set_pid(rps_conf_t *cf,rps_command_t *cmd,void *conf)
     rps_pool_t  *pool = cf->pool;
     rps_str_t   *new_str;
 
-    if(!rps_strcmp_with_cstr(ccf->pid,"default.pid.txt")){
+    if(!rps_strcmp_with_cstr(ccf->pid,"run_pid.conf")){
         rps_log_error(RPS_LOG_ALERT,cf->log,0,"\"pid\" has already been duplicated!");
         return "is duplicate";
     }

@@ -19,12 +19,14 @@ rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
         int opt = 1;
         // 在 bind 之前设置 SO_REUSEADDR以及SO_REUSEPORT
         if (setsockopt(listen_array[i].fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-            perror("setsockopt SO_REUSEADDR failed");
-            exit(EXIT_FAILURE);
+            rps_log_error(RPS_LOG_ERR, cycle->log, errno,
+                          "setsockopt SO_REUSEADDR failed");
+            return RPS_ERROR;
         }
         if (setsockopt(listen_array[i].fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt)) < 0) {
-            perror("setsockopt SO_REUSEPORT failed");
-            exit(EXIT_FAILURE);
+            rps_log_error(RPS_LOG_ERR, cycle->log, errno,
+                          "setsockopt SO_REUSEPORT failed");
+            return RPS_ERROR;
         }
 
         bind(listen_array[i].fd, &listen_array[i].sockaddr, listen_array[i].socklen);
@@ -34,7 +36,7 @@ rps_int_t rps_open_listening_sockets(rps_cycle_t *cycle){
     }
     return RPS_OK;
 }
-#ifdef _THROWN
+#ifdef 0
 /**
  * 这个函数应该废弃，现在的实现中，listensocket是交给connection对象了的
  * 释放交给connection对象去做
@@ -72,6 +74,8 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         new_conn->close = 0;
         new_conn ->sent = 0;
         new_conn -> listenling = listening;
+        new_conn -> read -> timedout = 0;
+        new_conn -> write -> timedout = 0;
 
         rps_memzero(&new_conn->addr_text, sizeof(rps_str_t));
 
@@ -113,8 +117,8 @@ void rps_close_connection(rps_connection_t *c){
     rps_memzero(&c->sockaddr, sizeof(struct sockaddr));
     rps_memzero(&c->addr_text, sizeof(rps_str_t));
 
-    if (c->read  != NULL) c->read->active  = 0;
-    if (c->write != NULL) c->write->active = 0;
+    if (c->read  != NULL) { c->read->active  = 0; c->read->timedout  = 0; }
+    if (c->write != NULL) { c->write->active = 0; c->write->timedout = 0; }
 }
 
 rps_int_t

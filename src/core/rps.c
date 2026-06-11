@@ -97,9 +97,10 @@ int main(int argc,char **argv){
 
 
     cycle = rps_init_cycle(&init_cycle);
-    
+
     if(cycle == NULL){
         rps_log_error(RPS_LOG_ERR,log,0,"New cycle create failed!");
+        return 1;
     }
     rps_master_process_cycle(cycle);
 } 
@@ -504,7 +505,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
         engine->process_events(cycle, timer);
 
         rps_event_expire_timers();
-    } 
+    }
 }
 
 /*

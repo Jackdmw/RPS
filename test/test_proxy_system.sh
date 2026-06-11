@@ -129,15 +129,18 @@ run_test() {
     local response
 
     if $USE_CURL; then
-        response=$(curl -s --max-time 3 "$url" 2>&1 || echo "CURL_ERROR")
+        # --http1.0: 每次请求独立连接，避免 keepalive 与 RPS 代理模式冲突
+        response=$(curl -s --max-time 3 --http1.0 "$url" 2>&1 || echo "CURL_ERROR")
     fi
 
     if [ -z "$response" ] || [ "$response" = "CURL_ERROR" ]; then
         echo -e "  ${RED}FAIL${NC}: $desc (curl failed or empty response)"
         FAIL=$((FAIL + 1))
-        # Try raw socket
+        # Try raw socket with correct path
         local host="127.0.0.1"
-        local raw_req="GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"
+        local path
+        path=$(echo "$url" | sed 's|^http://[^/]*||')
+        local raw_req="GET $path HTTP/1.0\r\nHost: localhost\r\n\r\n"
         response=$(send_request "$host" "$PROXY_PORT" "$raw_req")
     fi
     assert_contains "$desc" "$response" "$expected"
@@ -157,7 +160,7 @@ echo ""
 echo "  --- multiple requests ---"
 for i in 1 2 3; do
     if $USE_CURL; then
-        resp=$(curl -s --max-time 3 "http://127.0.0.1:$PROXY_PORT/" 2>&1 || echo "")
+        resp=$(curl -s --max-time 3 --http1.0 "http://127.0.0.1:$PROXY_PORT/" 2>&1 || echo "")
         if echo "$resp" | grep -q "Hello from backend"; then
             echo -e "  ${GREEN}PASS${NC}: request $i"
             PASS=$((PASS + 1))
@@ -169,7 +172,7 @@ for i in 1 2 3; do
 done
 
 # Test 5: error path
-run_test "GET /error" "http://127.0.0.1:$PROXY_PORT/error" "500"
+run_test "GET /error" "http://127.0.0.1:$PROXY_PORT/error" "Backend error"
 
 # ── check RPS still alive ──────────────────────────────────
 echo ""

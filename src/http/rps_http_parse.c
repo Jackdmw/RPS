@@ -195,6 +195,7 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
                 new_header -> value = value;
             }
 
+            r->headers_in.headers_n++;
             one_header = pos + 2;
         }
     }

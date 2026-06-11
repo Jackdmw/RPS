@@ -128,7 +128,7 @@ rps_upstream_block(rps_conf_t *cf, rps_command_t *cmd, void *conf)
     }
     *array_ele = ucf;
 
-    ucf->name = values[1];
+    rps_strcpy(ucf->name, values[1], pool);
 
     if (rps_array_init(&ucf->peers, pool, 4,
                        sizeof(rps_upstream_peer_t)) == RPS_ERROR) {
@@ -202,8 +202,12 @@ rps_set_upstream_server(rps_conf_t *cf, rps_command_t *cmd, void *conf)
         p++;
     }
 
-    peer->host.data = addr_str.data;
-    peer->host.len  = (rps_uint_t)(p - addr_str.data);
+    {
+        rps_str_t tmp_host;
+        tmp_host.data = addr_str.data;
+        tmp_host.len  = (rps_uint_t)(p - addr_str.data);
+        rps_strcpy(peer->host, tmp_host, cf->pool);
+    }
 
     if (p < addr_str.data + addr_str.len && *p == ':') {
         p++;
@@ -526,11 +530,13 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
      * 注册事件 — 隐式状态机：
      *   send_handler 首次触发时检查 connect 结果，然后发送请求。
      *   全部发送后 del write、add read，read_handler 接管后续。
+     *
+     * 保持 ev->data = 连接对象（rps_epoll_add_event 需要它获取 fd），
+     * 请求对象通过 c->data 传递（与客户端连接保持一致的模式）。
      */
     u->peer->write->handler = rps_upstream_send_handler;
-    u->peer->write->data    = r;
     u->peer->read->handler  = rps_upstream_read_handler;
-    u->peer->read->data     = r;
+    u->peer->data           = r;
 
     if (r->cycle->event_engine->add_event(u->peer->write,
                                           RPS_WRITE_EVENT) != RPS_OK) {
@@ -551,9 +557,12 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
 static void
 rps_upstream_send_handler(rps_event_t *ev)
 {
-    rps_http_request_t *r = ev->data;
+    rps_connection_t   *c = ev->data;
+    rps_http_request_t *r;
     rps_upstream_t     *u;
 
+    if (c == NULL) return;
+    r = c->data;
     if (r == NULL) return;
     u = r->upstream;
     if (u == NULL) return;
@@ -623,10 +632,13 @@ rps_upstream_send_handler(rps_event_t *ev)
 static void
 rps_upstream_read_handler(rps_event_t *ev)
 {
-    rps_http_request_t *r = ev->data;
+    rps_connection_t   *c = ev->data;
+    rps_http_request_t *r;
     rps_upstream_t     *u;
     ssize_t             n;
 
+    if (c == NULL) return;
+    r = c->data;
     if (r == NULL) return;
     u = r->upstream;
     if (u == NULL) return;
@@ -814,6 +826,7 @@ rps_upstream_get_peer(rps_http_request_t *r, rps_upstream_t *u)
         /* 弹出缓存栈 */
         ucf->free_peers.nelts--;
 
+        u->peer = peer;
         return peer;
     }
 

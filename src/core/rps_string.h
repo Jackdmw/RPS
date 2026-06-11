@@ -37,7 +37,11 @@ rps_int_t rps_atoi(u_char * line,size_t n);
     (rps_str_dest).len = (rps_str_src).len;                       \
 }
 
-/** 注意，这个宏的使用对象不能是字符串字面量 */
+/**
+ * 注意：这个宏会原地修改字符串内容。
+ * 使用对象绝对不能是字符串字面量（如 rps_string("Host")），
+ * 否则会触发段错误。只能用于指向可写缓冲区（如 rps_buf_t 内部）的 rps_str_t。
+ */
 #define  rps_str_lowercase(str){                        \
     u_char           *d;                                \
     rps_uint_t        len;                              \

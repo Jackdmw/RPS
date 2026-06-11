@@ -162,7 +162,6 @@ rps_http_complete_request(rps_connection_t *c)
     rps_http_request_t  *r;
 
     if (c->close) {
-        printf ("tmp: close connection\n");
         rps_free_connection(c);
         return;
     }
