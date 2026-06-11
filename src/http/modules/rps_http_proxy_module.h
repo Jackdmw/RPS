@@ -6,10 +6,11 @@
 #include "core/rps_array.h"
 #include "core/rps_module.h"
 
-/* proxy_set_header 存储的键值对 */
+/* proxy_set_header 存储的键值对（配置解析时预计算 key 的 hash） */
 typedef struct {
     rps_str_t   key;
     rps_str_t   value;
+    rps_uint_t  key_hash;       /* key 的小写 djb2 hash（构建请求时快速去重） */
 } rps_http_proxy_header_t;
 
 /* location 级别代理配置 */

@@ -35,10 +35,6 @@ static rps_int_t rps_http_proxy_create_request(rps_http_request_t *r,
 static rps_int_t rps_http_proxy_process_header(rps_http_request_t *r,
                                                 rps_upstream_t *u);
 
-static rps_int_t rps_http_proxy_build_request(rps_http_request_t *r,
-    rps_http_proxy_loc_conf_t *plcf, rps_pool_t *pool,
-    u_char **buf_out, size_t *len_out);
-
 /* proxy 专用写事件续传：header 发送完毕后恢复 upstream 读取 */
 static void rps_http_proxy_header_write_continue(rps_event_t *ev);
 
@@ -376,117 +372,11 @@ rps_conf_set_proxy_header(rps_conf_t *cf, rps_command_t *cmd, void *conf)
 
     rps_strcpy(h->key,   values[1], cf->pool);
     rps_strcpy(h->value, values[2], cf->pool);
+    rps_hash_str_lc(values[1], h->key_hash);
 
     return RPS_CONF_OK;
 }
 
-
-/*
- * 构造要发送到后端的 HTTP 请求（直接写入 buffer，零中间结构）
- * TODO: 
- * 1. 目前没有处理header的重复性，后面再集中考虑，预计使用hash判断。
- */
-static rps_int_t
-rps_http_proxy_build_request(rps_http_request_t *r,
-    rps_http_proxy_loc_conf_t *plcf, rps_pool_t *pool,
-    u_char **buf_out, size_t *len_out)
-{
-    rps_http_proxy_header_t  *ph;
-    rps_http_header_kv_t     *hdr;
-    rps_list_part_t          *part;
-    u_char                   *p, *buf;
-    rps_str_t                 ver;
-    rps_uint_t                i;
-
-    buf = rps_palloc(pool, 8192);
-    if (buf == NULL) return RPS_ERROR;
-    p = buf;
-
-    /* ── 请求行 ── */
-    if (plcf->proxy_method.data != NULL) {
-        p = rps_cpymem(p, plcf->proxy_method.data, plcf->proxy_method.len);
-    } else {
-        p = rps_cpymem(p, r->method.data, r->method.len);
-    }
-    *p++ = ' ';
-
-    /* 如果 proxy_pass 未指定 URI 路径，透传原始请求 URI */
-    if (plcf->upstream_uri.data != NULL && plcf->upstream_uri.len > 0) {
-        p = rps_cpymem(p, plcf->upstream_uri.data, plcf->upstream_uri.len);
-    } else {
-        p = rps_cpymem(p, r->uri.data, r->uri.len);
-    }
-    if (r->args.len > 0) {
-        *p++ = '?';
-        p = rps_cpymem(p, r->args.data, r->args.len);
-    }
-    *p++ = ' ';
-
-    ver = plcf->proxy_http_version;
-    if (ver.data != NULL) {
-        p = rps_cpymem(p, "HTTP/", 5);
-        p = rps_cpymem(p, ver.data, ver.len);
-    } else {
-        p = rps_cpymem(p, "HTTP/1.1", 8);
-    }
-    *p++ = '\r'; *p++ = '\n';
-
-    /* ── Host（非 80 带端口）─── */
-    p = rps_cpymem(p, "Host: ", 6);
-    p = rps_cpymem(p, plcf->upstream_host.data, plcf->upstream_host.len);
-    if (plcf->upstream_port != 80) {
-        p += snprintf((char *)p, 8, ":%u", (unsigned int)plcf->upstream_port);
-    }
-    *p++ = '\r'; *p++ = '\n';
-
-    /* ── X-Real-IP / X-Forwarded-For ── */
-    if (r->connection->addr_text.data != NULL) {
-        p = rps_cpymem(p, "X-Real-IP: ", 11);
-        p = rps_cpymem(p, r->connection->addr_text.data,
-                       r->connection->addr_text.len);
-        *p++ = '\r'; *p++ = '\n';
-
-        p = rps_cpymem(p, "X-Forwarded-For: ", 17);
-        p = rps_cpymem(p, r->connection->addr_text.data,
-                       r->connection->addr_text.len);
-        *p++ = '\r'; *p++ = '\n';
-    }
-
-    /* ── proxy_set_header ── */
-    ph = plcf->set_headers.elts;
-    for (i = 0; i < plcf->set_headers.nelts; i++) {
-        p = rps_cpymem(p, ph[i].key.data,   ph[i].key.len);
-        *p++ = ':'; *p++ = ' ';
-        p = rps_cpymem(p, ph[i].value.data, ph[i].value.len);
-        *p++ = '\r'; *p++ = '\n';
-    }
-
-    /* ── 转发客户端原始 header ── */
-    if (plcf->pass_request_headers) {
-        part = &r->headers_in.headers.part;
-        while (part != NULL) {
-            hdr = (rps_http_header_kv_t *)part->elts;
-            for (i = 0; i < part->nelts; i++) {
-                p = rps_cpymem(p, hdr[i].key.data,   hdr[i].key.len);
-                *p++ = ':'; *p++ = ' ';
-                p = rps_cpymem(p, hdr[i].value.data, hdr[i].value.len);
-                *p++ = '\r'; *p++ = '\n';
-            }
-            part = part->next;
-        }
-    }
-
-    /* ── Connection: close ── */
-    p = rps_cpymem(p, "Connection: close\r\n", 19);
-
-    /* ── 空行 ── */
-    *p++ = '\r'; *p++ = '\n';
-
-    *buf_out = buf;
-    *len_out = (size_t)(p - buf);
-
-    return RPS_OK;
-}
 
 
 /*
@@ -557,26 +447,176 @@ rps_http_proxy_handler(rps_http_request_t *r)
 }
 
 /*
- * upstream 回调：构造发往后端的 HTTP 请求
+ * upstream 回调：构造发往后端的 HTTP 请求（直接写入 u->request_bufs）
  */
 static rps_int_t
 rps_http_proxy_create_request(rps_http_request_t *r, rps_upstream_t *u)
 {
     rps_http_proxy_loc_conf_t  *plcf;
-    u_char                     *buf;
-    size_t                      len;
-    rps_int_t                   rc;
+    rps_http_proxy_header_t    *ph;
+    rps_http_header_kv_t       *hdr;
+    rps_list_part_t            *part;
+    u_char                     *p;
+    rps_str_t                   ver;
+    rps_uint_t                  i;
 
     plcf = r->loc_conf[rps_http_proxy_module.ctx_index];
 
-    rc = rps_http_proxy_build_request(r, plcf, r->pool, &buf, &len);
-    if (rc != RPS_OK) return RPS_ERROR;
-
-    u->request_bufs = rps_buf_create(r->pool, len);
+    u->request_bufs = rps_buf_create(r->pool, 8192);
     if (u->request_bufs == NULL) return RPS_ERROR;
 
-    memcpy(u->request_bufs->pos, buf, len);
-    u->request_bufs->last = u->request_bufs->pos + len;
+    p = u->request_bufs->pos;
+
+    /* ── 请求行 ── */
+    if (plcf->proxy_method.data != NULL) {
+        p = rps_cpymem(p, plcf->proxy_method.data, plcf->proxy_method.len);
+    } else {
+        p = rps_cpymem(p, r->method.data, r->method.len);
+    }
+    *p++ = ' ';
+
+    if (plcf->upstream_uri.data != NULL && plcf->upstream_uri.len > 0) {
+        p = rps_cpymem(p, plcf->upstream_uri.data, plcf->upstream_uri.len);
+    } else {
+        p = rps_cpymem(p, r->uri.data, r->uri.len);
+    }
+    if (r->args.len > 0) {
+        *p++ = '?';
+        p = rps_cpymem(p, r->args.data, r->args.len);
+    }
+    *p++ = ' ';
+
+    ver = plcf->proxy_http_version;
+    if (ver.data != NULL) {
+        p = rps_cpymem(p, "HTTP/", 5);
+        p = rps_cpymem(p, ver.data, ver.len);
+    } else {
+        p = rps_cpymem(p, "HTTP/1.1", 8);
+    }
+    *p++ = '\r'; *p++ = '\n';
+
+    /* ── Host ── */
+    p = rps_cpymem(p, "Host: ", 6);
+    p = rps_cpymem(p, plcf->upstream_host.data, plcf->upstream_host.len);
+    if (plcf->upstream_port != 80) {
+        p += snprintf((char *)p, 8, ":%u", (unsigned int)plcf->upstream_port);
+    }
+    *p++ = '\r'; *p++ = '\n';
+
+    /* ── X-Real-IP / X-Forwarded-For ──
+     * X-Real-IP：客户端已设置则保留（多层代理透传），否则写入直连 IP
+     * X-Forwarded-For：追加当前客户端 IP，而非覆盖
+     */
+    if (r->connection->addr_text.data != NULL) {
+        unsigned    has_real_ip  = 0;
+        unsigned    has_xff      = 0;
+        rps_str_t   xff_orig     = {0, NULL};
+
+        /* 扫描客户端原始头中是否已有 X-Real-IP / X-Forwarded-For */
+        {
+            rps_http_header_kv_t *sh;
+            rps_list_part_t      *sp;
+            rps_uint_t            k;
+
+            sp = &r->headers_in.headers.part;
+            while (sp != NULL) {
+                sh = (rps_http_header_kv_t *)sp->elts;
+                for (k = 0; k < sp->nelts; k++) {
+                    if (!has_real_ip
+                        && rps_strcmp_with_cstr(sh[k].key, "x-real-ip"))
+                    {
+                        has_real_ip = 1;
+                    }
+                    if (!has_xff
+                        && rps_strcmp_with_cstr(sh[k].key, "x-forwarded-for"))
+                    {
+                        has_xff = 1;
+                        xff_orig = sh[k].value;
+                    }
+                    if (has_real_ip && has_xff) goto xff_done;
+                }
+                sp = sp->next;
+            }
+            xff_done:;
+        }
+
+        /* X-Real-IP：仅当上游未设置时才写入 */
+        if (!has_real_ip) {
+            p = rps_cpymem(p, "X-Real-IP: ", 11);
+            p = rps_cpymem(p, r->connection->addr_text.data,
+                           r->connection->addr_text.len);
+            *p++ = '\r'; *p++ = '\n';
+        }
+
+        /* X-Forwarded-For：追加当前客户端 IP */
+        p = rps_cpymem(p, "X-Forwarded-For: ", 17);
+        if (has_xff && xff_orig.data != NULL) {
+            p = rps_cpymem(p, xff_orig.data, xff_orig.len);
+            *p++ = ','; *p++ = ' ';
+        }
+        p = rps_cpymem(p, r->connection->addr_text.data,
+                       r->connection->addr_text.len);
+        *p++ = '\r'; *p++ = '\n';
+    }
+
+    /* ── proxy_set_header ── */
+    ph = plcf->set_headers.elts;
+    for (i = 0; i < plcf->set_headers.nelts; i++) {
+        p = rps_cpymem(p, ph[i].key.data,   ph[i].key.len);
+        *p++ = ':'; *p++ = ' ';
+        p = rps_cpymem(p, ph[i].value.data, ph[i].value.len);
+        *p++ = '\r'; *p++ = '\n';
+    }
+
+    /* ── 转发客户端原始 header（去重：跳过已显式设置的头）── */
+    if (plcf->pass_request_headers) {
+        part = &r->headers_in.headers.part;
+        while (part != NULL) {
+            hdr = (rps_http_header_kv_t *)part->elts;
+            for (i = 0; i < part->nelts; i++) {
+                rps_uint_t  j;
+                rps_uint_t  h;
+                unsigned    skip = 0;
+
+                /* 跳过已写内置头（host / connection / x-forwarded-for 总是自己构造） */
+                if (rps_strcmp_with_cstr(hdr[i].key, "host")
+                    || rps_strcmp_with_cstr(hdr[i].key, "connection")
+                    || rps_strcmp_with_cstr(hdr[i].key, "x-forwarded-for"))
+                {
+                    continue;
+                }
+
+                /* 跳过 proxy_set_header 已覆盖的头（hash 加速比对） */
+                rps_hash_str_lc(hdr[i].key, h);
+                for (j = 0; j < plcf->set_headers.nelts; j++) {
+                    if (h == ph[j].key_hash
+                        && rps_strcmp(hdr[i].key, ph[j].key))
+                    {
+                        skip = 1; break;
+                    }
+                }
+                if (skip) continue;
+
+                p = rps_cpymem(p, hdr[i].key.data,   hdr[i].key.len);
+                *p++ = ':'; *p++ = ' ';
+                p = rps_cpymem(p, hdr[i].value.data, hdr[i].value.len);
+                *p++ = '\r'; *p++ = '\n';
+            }
+            part = part->next;
+        }
+    }
+
+    /* ── Connection ── */
+    if (u->upstream_conf != NULL && u->upstream_conf->keepalive > 0) {
+        p = rps_cpymem(p, "Connection: keep-alive\r\n", 23);
+    } else {
+        p = rps_cpymem(p, "Connection: close\r\n", 19);
+    }
+
+    /* ── 空行 ── */
+    *p++ = '\r'; *p++ = '\n';
+
+    u->request_bufs->last = p;
 
     return RPS_OK;
 }
@@ -618,26 +658,31 @@ rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
         return RPS_AGAIN;   /* 头部不完整，等更多数据 */
     }
 
-    /* ── 解析 status line ── */
+    /* ── 解析 status line：HTTP/x.x → 定 keepalive 默认值 ── */
     line = p;
     {
         u_char *status_cr = line;
+        u_char *sp;
         while (status_cr < header_end && *status_cr != '\r') status_cr++;
         if (status_cr >= header_end) return RPS_ERROR;
 
-        /* 跳过 "HTTP/x.x "，定位状态码+原因短语 */
-        {
-            u_char *sp = line;
-            while (sp < status_cr && *sp != ' ') sp++;
-            if (sp < status_cr) {
-                sp++;  /* 跳过第一个空格 */
-                r->headers_out.status.value.data = sp;
-                r->headers_out.status.value.len  = (rps_uint_t)(status_cr - sp);
-            }
+        /* 提取 HTTP 版本，决定 keepalive 默认策略 */
+        sp = line;
+        while (sp < status_cr && *sp != ' ') sp++;
+
+        if (sp - line >= 8) {
+            /* HTTP/1.1 默认 keep-alive, HTTP/1.0 默认 close */
+            u->keepalive = (line[5] == '1' && line[6] == '.' && line[7] == '1') ? 1 : 0;
+        }
+
+        if (sp < status_cr) {
+            sp++;  /* 跳过第一个空格 */
+            r->headers_out.status.value.data = sp;
+            r->headers_out.status.value.len  = (rps_uint_t)(status_cr - sp);
         }
 
         /* 跳过 status line 的 \r\n */
-        p = line + (status_cr - line) + 2;
+        p = status_cr + 2;
     }
 
     /* ── 逐行解析响应头 ── */
@@ -668,10 +713,17 @@ rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
                     r->headers_out.content_type.value = value;
                 } else if (rps_strcmp_with_cstr(key, "content-length")) {
                     r->headers_out.content_length_n.value = value;
-                    rps_http_set_content_length(r,
-                        (size_t)rps_atoi(value.data, value.len));
+                    rps_http_set_content_length(r, (size_t)rps_atoi(value.data, value.len));
                 } else if (rps_strcmp_with_cstr(key, "server")) {
                     r->headers_out.server.value = value;
+                } else if (rps_strcmp_with_cstr(key, "connection")) {
+                    /* 后端 Connection 头决定此连接是否可 keepalive 复用 */
+                    rps_str_lowercase(value);
+                    if (value.len == 5 && memcmp(value.data, "close", 5) == 0) {
+                        u->keepalive = 0;
+                    } else if (value.len == 10 && memcmp(value.data, "keep-alive", 10) == 0) {
+                        u->keepalive = 1;
+                    }
                 } else {
                     /* 透传其他 header（Set-Cookie, ETag 等） */
                     rps_http_add_response_header(r, key, value);
@@ -694,8 +746,7 @@ rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
          * rps_http_write_filter_continue，改为 proxy 专用续传
          * （写入完成后恢复 upstream 读取，而非 finalize request）。
          */
-        r->connection->write->handler
-            = rps_http_proxy_header_write_continue;
+        r->connection->write->handler = rps_http_proxy_header_write_continue;
         return RPS_AGAIN;
     }
 
