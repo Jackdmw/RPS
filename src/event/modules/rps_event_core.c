@@ -74,8 +74,8 @@ char * rps_set_use(rps_conf_t *cf,rps_command_t *cmd,void* conf){
         ccf -> use = (rps_str_t)rps_string("io_uring");
         cf -> cycle -> use = ccf -> use;
     }
-    else if ( rps_strcmp_with_cstr(values[1],"threads")){
-        ccf -> use = (rps_str_t)rps_string("threads");
+    else if ( rps_strcmp_with_cstr(values[1],"multithreading")){
+        ccf -> use = (rps_str_t)rps_string("multithreading");
         cf -> cycle -> use = ccf -> use;
         cf -> cycle -> if_pthread = 1;
     }
