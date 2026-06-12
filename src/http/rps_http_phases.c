@@ -141,7 +141,6 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
                 || rps_strcmp(host, srv->server_name) == RPS_STRING_EQUAL)
             {
                 r->srv_conf = srv_container->srv_conf;
-                rps_log_error(RPS_LOG_ERR, r->cycle -> log, 0, "matched");
                 break;
             }
 
