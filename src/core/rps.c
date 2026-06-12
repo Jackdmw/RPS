@@ -581,9 +581,7 @@ rps_event_accept(rps_event_t *ev)
         rps_free_connection(new_c);
         return;
     }
-
-    /* 客户端读取超时：60s 内未发完完整请求则关闭 */
-    rps_event_add_timer(new_c->read, 60000);
+    /* 计时器已在 rps_http_create_request 中重置 */
 }
 
 
@@ -604,7 +602,17 @@ rps_http_wait_request_handler(rps_event_t *ev)
     c = ev->data;
     r = c->data;
 
+    /*
+     * 请求正在阶段引擎中处理（c->data 已解耦），客户端又发来数据。
+     * LT 模式会不断触发 → 删除读事件，等 rps_http_complete_request
+     * 创建新请求后再重新注册。del_event 会删整个 fd，所以只在 write 未激活时操作。
+     */
     if (r == NULL) {
+        if (c->cycle->event_engine != NULL
+            && (!c->write || !c->write->active))
+        {
+            c->cycle->event_engine->del_event(c->read, RPS_READ_EVENT);
+        }
         return;
     }
 
