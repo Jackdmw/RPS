@@ -122,10 +122,10 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
     pos = buf -> pos;
     for (one_header = pos; pos < buf -> last; pos ++){
         if (pos[0] == '\r' && pos[1] == '\n'){
+            buf->pos = pos + 2;
             if (one_header == pos){
-                buf->pos = pos + 2;
                 r->parse_status = 2;
-
+                r -> request_body_pos = buf->pos;
                 /* keepalive 判断 */
                 if (rps_strcmp_with_cstr(r->http_version, "HTTP/1.0")) {
                     r->keepalive = 0;
@@ -145,7 +145,6 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
                         r->keepalive = 0;
                     }
                 }
-
                 return RPS_HTTP_PARSE_OK;
             }
 
