@@ -16,7 +16,7 @@ rps_buf_init(rps_pool_t *pool,rps_buf_t * b, size_t size)
 rps_buf_t  *rps_buf_create(rps_pool_t *pool, size_t size){
     rps_buf_t               *buf;
 
-    buf = rps_palloc(pool, sizeof(rps_buf_t));
+    buf = rps_pcalloc(pool, sizeof(rps_buf_t));
     if(rps_buf_init(pool, buf, size) == RPS_ERROR){
         return NULL;
     }

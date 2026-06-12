@@ -89,6 +89,7 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
  * 释放连接对象的一切，并且还回cycle
  */
 void rps_free_connection(rps_connection_t *c){
+    rps_log_error(RPS_LOG_INFO, c -> cycle -> log, 0, "free connection object");
     rps_close_connection(c);
     c -> data = c -> cycle -> free_connection;
     c -> cycle -> free_connection = c;
