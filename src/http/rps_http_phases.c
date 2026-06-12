@@ -13,6 +13,20 @@
  *    checker → RPS_OK    : 请求挂起或结束，run_phases 返回
  */
 
+/*
+ * finalize + complete 原子操作。
+ * 必须在 finalize（会销毁 r）之前取出 c = r->connection，
+ * 否则访问 r->connection 是 use-after-free。
+ */
+static void
+rps_http_finalize_and_complete(rps_http_request_t *r, rps_int_t rc)
+{
+    rps_connection_t *c = r->connection;
+
+    rps_http_finalize_request(r, rc);
+    if (c) rps_http_complete_request(c);
+}
+
  /**
   * 每个阶段只执行一个handler
   */
@@ -39,8 +53,7 @@ rps_http_core_generic_phase(rps_http_request_t *r,
     }
 
     /* 其他返回值视为错误 */
-    rps_http_finalize_request(r, rc);
-    rps_http_complete_request(r->connection);
+    rps_http_finalize_and_complete(r, rc);
     return RPS_OK;
 }
 
@@ -71,8 +84,7 @@ rps_http_core_rewrite_phase(rps_http_request_t *r,
         return RPS_AGAIN;
     }
 
-    rps_http_finalize_request(r, rc);
-    rps_http_complete_request(r->connection);
+    rps_http_finalize_and_complete(r, rc);
     return RPS_OK;
 }
 
@@ -93,15 +105,14 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
     cmcf = r->main_conf[rps_http_core_module.ctx_index];
 
     if (cmcf == NULL) {
-        rps_http_finalize_request(r, RPS_ERROR);
-    rps_http_complete_request(r->connection);
+        rps_http_finalize_and_complete(r, RPS_ERROR);
         return RPS_OK;
     }
 
     /* 匹配虚拟主机 — 第一优先级：监听端口，第二优先级：Host 头 */
     servers = cmcf->servers.elts;
     srv     = NULL;
-
+    r -> srv_conf = NULL;
     host = r->headers_in.host.value;
 
     /* 提取当前连接的监听端口 */
@@ -112,6 +123,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
         sin = (struct sockaddr_in *)&r->connection->listenling->sockaddr;
         listen_port = ntohs(sin->sin_port);
 
+        rps_log_error(RPS_LOG_DEBUG, r -> cycle -> log, 0, "port is %d,host  is %.*s",listen_port,host.len,host.data);
         /* 第一轮：端口 + Host 精确匹配 */
         for (i = 0; i < cmcf->servers.nelts; i++) {
             srv_container = servers[i];
@@ -124,13 +136,15 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
                 continue;
             }
 
-            r->srv_conf = srv_container->srv_conf;
 
             if (host.len == 0
                 || rps_strcmp(host, srv->server_name) == RPS_STRING_EQUAL)
             {
+                r->srv_conf = srv_container->srv_conf;
+                rps_log_error(RPS_LOG_ERR, r->cycle -> log, 0, "matched");
                 break;
             }
+
         }
 
         /* 第二轮：只要端口匹配，取第一个 */
@@ -152,38 +166,7 @@ rps_http_core_find_config_phase(rps_http_request_t *r,
         }
     }
 
-    /* 回退：没有端口匹配的，按原来的 Host 头逻辑 */
-    if (r->srv_conf == NULL) {
-        for (i = 0; i < cmcf->servers.nelts; i++) {
-            srv_container = servers[i];
-            if (srv_container == NULL) {
-                continue;
-            }
-
-            srv = srv_container->srv_conf[rps_http_core_module.ctx_index];
-            if (srv == NULL) {
-                continue;
-            }
-
-            if (host.len == 0) {
-                r->srv_conf = srv_container->srv_conf;
-                break;
-            }
-
-            if (rps_strcmp(host, srv->server_name) == RPS_STRING_EQUAL) {
-                r->srv_conf = srv_container->srv_conf;
-                break;
-            }
-        }
-    }
-
-    if (r->srv_conf == NULL && cmcf->servers.nelts > 0) {
-        /* 都没匹配到，用第一个 server */
-        srv_container = servers[0];
-        r->srv_conf   = srv_container->srv_conf;
-        srv           = srv_container->srv_conf[rps_http_core_module.ctx_index];
-    }
-
+    
     /*匹配 location*/
     if (srv != NULL) {
         locations = srv->locations.elts;
@@ -245,8 +228,7 @@ rps_http_core_post_rewrite_phase(rps_http_request_t *r,
 
         r->internal_redirect++;
         if (r->internal_redirect > 10) {
-            rps_http_finalize_request(r, RPS_ERROR);
-            rps_http_complete_request(r->connection);
+            rps_http_finalize_and_complete(r, RPS_ERROR);
             return RPS_OK;
         }
 
@@ -344,13 +326,11 @@ rps_http_core_content_phase(rps_http_request_t *r,
 
                 if (send_rc == RPS_OK) {
                     /* 同步发送完毕 */
-                    rps_http_finalize_request(r, RPS_OK);
-                    rps_http_complete_request(r->connection);
+                    rps_http_finalize_and_complete(r, RPS_OK);
                 } else if (send_rc == RPS_AGAIN) {
                     /* write_filter_continue 会在写就绪后 finalize */
                 } else {
-                    rps_http_finalize_request(r, RPS_ERROR);
-                    rps_http_complete_request(r->connection);
+                    rps_http_finalize_and_complete(r, RPS_ERROR);
                 }
             }
             return RPS_OK;
@@ -360,8 +340,7 @@ rps_http_core_content_phase(rps_http_request_t *r,
 
     if (rc == RPS_OK || rc == RPS_HTTP_DONE) {
         /* handler 已自行发送响应（如调用 rps_http_send_response） */
-        rps_http_finalize_request(r, RPS_OK);
-        rps_http_complete_request(r->connection);
+        rps_http_finalize_and_complete(r, RPS_OK);
         return RPS_OK;
     }
 
@@ -369,8 +348,7 @@ rps_http_core_content_phase(rps_http_request_t *r,
         return RPS_OK;
     }
 
-    rps_http_finalize_request(r, rc);
-    rps_http_complete_request(r->connection);
+    rps_http_finalize_and_complete(r, rc);
     return RPS_OK;
 }
 
@@ -502,8 +480,7 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
 
 
     if (cmcf == NULL || cmcf->phase_engine.handlers == NULL) {
-        rps_http_finalize_request(r, RPS_ERROR);
-        rps_http_complete_request(r->connection);
+        rps_http_finalize_and_complete(r, RPS_ERROR);
         return RPS_ERROR;
     }
 
@@ -523,7 +500,6 @@ rps_http_run_phases(rps_http_request_t *r, rps_http_core_main_conf_t *cmcf)
          *   表示 phase_index 已更新，继续下一轮循环
          */
     }
-    rps_http_finalize_request(r, RPS_OK);
-    rps_http_complete_request(r->connection);
+    rps_http_finalize_and_complete(r, RPS_OK);
     return RPS_OK;
 }
