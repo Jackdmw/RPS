@@ -34,9 +34,12 @@ static rps_int_t rps_http_proxy_create_request(rps_http_request_t *r,
                                                 rps_upstream_t *u);
 static rps_int_t rps_http_proxy_process_header(rps_http_request_t *r,
                                                 rps_upstream_t *u);
+static rps_int_t rps_http_proxy_forward_body(rps_http_request_t *r,
+                                              rps_upstream_t *u);
 
-/* proxy 专用写事件续传：header 发送完毕后恢复 upstream 读取 */
+/* proxy 专用写事件续传：header / body 发送完毕后恢复 upstream 读取 */
 static void rps_http_proxy_header_write_continue(rps_event_t *ev);
+static void rps_http_proxy_body_write_continue(rps_event_t *ev);
 
 
 rps_command_t rps_http_proxy_module_commands[] = {
@@ -393,7 +396,6 @@ rps_http_proxy_handler(rps_http_request_t *r)
     plcf = r->loc_conf[rps_http_proxy_module.ctx_index];
     if (plcf == NULL || plcf->proxy_pass.data == NULL) return RPS_DECLINED;
 
-    r->keepalive = 0;
 
     u = rps_upstream_create(r);
     if (u == NULL) {
@@ -438,6 +440,7 @@ rps_http_proxy_handler(rps_http_request_t *r)
     /* 协议回调 */
     u->create_request = rps_http_proxy_create_request;
     u->process_header = rps_http_proxy_process_header;
+    u->forward_body   = rps_http_proxy_forward_body;
 
     r->upstream = u;
 
@@ -615,7 +618,9 @@ rps_http_proxy_create_request(rps_http_request_t *r, rps_upstream_t *u)
 
     /* ── 空行 ── */
     *p++ = '\r'; *p++ = '\n';
-
+    if (r ->request_body_pos != r -> request_body->last){
+        p = rps_cpymem(p,r -> request_body_pos, r -> headers_in.content_length_n);
+    }
     u->request_bufs->last = p;
 
     return RPS_OK;
@@ -713,7 +718,8 @@ rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
                     r->headers_out.content_type.value = value;
                 } else if (rps_strcmp_with_cstr(key, "content-length")) {
                     r->headers_out.content_length_n.value = value;
-                    rps_http_set_content_length(r, (size_t)rps_atoi(value.data, value.len));
+                    u->content_length_n = (size_t)rps_atoi(value.data, value.len);
+                    rps_http_set_content_length(r, u->content_length_n);
                 } else if (rps_strcmp_with_cstr(key, "server")) {
                     r->headers_out.server.value = value;
                 } else if (rps_strcmp_with_cstr(key, "connection")) {
@@ -736,7 +742,6 @@ rps_http_proxy_process_header(rps_http_request_t *r, rps_upstream_t *u)
 
     /* 移动到 body 起始 */
     u->response_buf->pos = header_end + 4;
-
     /* 发送响应头给客户端 */
     wrc = rps_http_send_header(r);
 
@@ -808,6 +813,86 @@ rps_http_proxy_header_write_continue(rps_event_t *ev)
          * 必须再次覆盖为 proxy 专用续传，否则下次写就绪会销毁 request。
          */
         c->write->handler = rps_http_proxy_header_write_continue;
+    }
+}
+
+/**
+ * upstream 回调：将已读到的响应体数据通过 HTTP 过滤链转发给客户端。
+ *
+ * 直接走 rps_http_send_body → write_filter，同一 buf 多次 append 到 chain 无害
+ *（旧 chain entry 的 pos/last 已持平，write_filter 会跳过）。
+ *
+ * 客户端写阻塞时背压：删除后端读事件，body_write_continue 写就绪后恢复。
+ */
+static rps_int_t
+rps_http_proxy_forward_body(rps_http_request_t *r, rps_upstream_t *u)
+{
+    size_t    len;
+    rps_int_t rc;
+
+    len = (size_t)(u->response_buf->last - u->response_buf->pos);
+    if (len == 0) return RPS_OK;
+
+    rc = rps_http_send_body(r, u->response_buf);
+
+    if (rc == RPS_AGAIN) {
+        if (u->peer && u->peer->read && u->peer->read->active)
+            r->cycle->event_engine->del_event(u->peer->read, RPS_READ_EVENT);
+        r->connection->write->handler= rps_http_proxy_body_write_continue;
+    }
+    return rc;
+}
+
+/*
+ * body 写续传：客户端写就绪后恢复 upstream 读取。
+ *
+ * 与 header_write_continue 对称，但用于 body 转发阶段。
+ */
+static void
+rps_http_proxy_body_write_continue(rps_event_t *ev)
+{
+    rps_http_request_t *r;
+    rps_upstream_t     *u;
+    rps_connection_t   *c;
+    rps_int_t           rc;
+
+    r = ev->data;
+    if (r == NULL || r->upstream == NULL) return;
+    u = r->upstream;
+    c = r->connection;
+
+    if (ev->timedout) {
+        rps_upstream_finalize(r, RPS_ERROR);
+        return;
+    }
+
+    rc = rps_http_write_filter(r);
+
+    if (rc == RPS_OK) {
+        /* body 写完毕：清理写事件 */
+        c->cycle->event_engine->del_event(c->write, RPS_WRITE_EVENT);
+        c->write->active = 0;
+        rps_event_del_timer(ev);
+
+        /* Content-Length 完成判定：body 全收全发 → 结束 */
+        if (u->content_length_n > 0
+            && u->body_received >= u->content_length_n)
+        {
+            rps_upstream_finalize(r, RPS_OK);
+            return;
+        }
+
+        /* 还有 body 未收：重新监听后端 */
+        if (c->cycle->event_engine->add_event(u->peer->read,
+                                               RPS_READ_EVENT) != RPS_OK) {
+            rps_upstream_finalize(r, RPS_ERROR);
+            return;
+        }
+        rps_event_add_timer(u->peer->read, u->read_timeout);
+    } else if (rc == RPS_ERROR) {
+        rps_upstream_finalize(r, RPS_ERROR);
+    } else {
+        c->write->handler = rps_http_proxy_body_write_continue;
     }
 }
 
