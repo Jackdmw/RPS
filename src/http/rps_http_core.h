@@ -101,7 +101,7 @@ struct rps_http_request_s {
     rps_buf_t              *request_body;        /* 存放已读取的请求数据（含起始行、header、body） */
     size_t                  request_body_rest;   /* 还需读多少字节 body（依据 Content-Length） */
     unsigned                reading_body:1;      /* 是否正在读取请求体 */
-
+    u_char                 *request_body_pos;
     /* 响应体（buffer 链，多个 buf 拼成一次 send） */
     rps_chain_t            *out_chain;
 
