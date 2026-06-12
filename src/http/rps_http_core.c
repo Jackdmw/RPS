@@ -2,6 +2,7 @@
 #include "rps_http_phases.h"
 #include "core/rps_connection.h"
 #include "core/rps_palloc.h"
+#include "event/rps_event.h"
 
 /*
  * 创建 HTTP 请求对象及独立内存池
@@ -79,10 +80,16 @@ rps_http_create_request(rps_connection_t *c)
     request->srv_conf     = NULL;
     request->uri_changed  = 0;
     request->internal_redirect = 0;
-    request->start_msec = 0;
+    request->start_msec = rps_current_msec();
     request->keepalive   = 1;
     request->log = c->listenling ? c->listenling->log : NULL;
 
+    /* 每次创建 request 重置客户端读超时，keepalive 连接复用时不继承旧计时 */
+    if (c->read) {
+        rps_event_add_timer(c->read, 60000);
+    }
+
+    rps_log_error(RPS_LOG_DEBUG, request -> log, 0, "new request has been created");
     return request;
 }
 
@@ -112,8 +119,7 @@ rps_http_release_request(rps_http_request_t *r)
      */
     if (r->upstream) {
         if (r->upstream->peer) {
-            rps_upstream_close_peer_conn(r->upstream->peer,
-                                          r->upstream->upstream_conf);
+            rps_upstream_close_peer_conn(r->upstream->peer);
             r->upstream->peer = NULL;
         }
         r->upstream = NULL;
@@ -147,14 +153,15 @@ rps_http_finalize_request(rps_http_request_t *r, rps_int_t rc)
     }
 
     rps_http_release_request(r);
-
+    rps_log_error(RPS_LOG_DEBUG,c -> cycle -> log, 0, "release http request");
     if (c) {
         c->close = !keepalive;
     }
 }
 
-/*
+/** 
  * 请求已结束 (finalize 后调用)，决定连接的命运。
+ * 根据c -> close,决定是否释放连接，以及是否创建新的请求对象
  */
 void
 rps_http_complete_request(rps_connection_t *c)
@@ -179,5 +186,5 @@ rps_http_complete_request(rps_connection_t *c)
         rps_free_connection(c);
         return;
     }
-    rps_event_add_timer(c->read, 60000);
+    /* 计时器已在 rps_http_create_request 中重置 */
 }
