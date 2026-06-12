@@ -143,7 +143,6 @@ rps_upstream_block(rps_conf_t *cf, rps_command_t *cmd, void *conf)
     ucf->keepalive                 = RPS_CONF_UNSET_UINT;
     ucf->keepalive_timeout          = RPS_CONF_UNSET_MSEC;
     ucf->keepalive_requests         = RPS_CONF_UNSET_UINT;
-    ucf->free_upstream_connections  = NULL;
     ucf->select_peer               = rps_upstream_select_peer_wrr;
 
     cf->cmd_type = RPS_HTTP_UPS_CONF;
@@ -316,6 +315,9 @@ rps_upstream_select_peer_wrr(rps_upstream_conf_t *ucf)
     return best;
 }
 
+/**
+ * 由http core postconfiguration 调用
+ */
 void
 rps_upstream_init_peers(rps_upstream_conf_t *ucf)
 {
@@ -333,11 +335,10 @@ rps_upstream_init_peers(rps_upstream_conf_t *ucf)
 
 
 /*
- * 获取一个 upstream 后端连接。
- *
- * 优先从 ucf->free_upstream_connections 空闲链表取（复用已分配的内存），
- * 链表空时才从 cycle->pool 新分配。每个 upstream 块独立管理自己的连接池。
- * ucf 为 NULL 时（无 upstream 块的直连代理），每次都新分配。
+ * 获取一个 upstream  connection 对象。
+ * 没有做连接！！！
+ * 优先从 cycle->free_upstream_connections 空闲链表取（复用已分配的内存），
+ * 链表空时才从 cycle->pool 新分配。所有 upstream 块共享同一个连接对象池。
  */
 static rps_connection_t *
 rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
@@ -345,10 +346,12 @@ rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
 {
     rps_connection_t *c;
 
-    /* 先从 upstream 块的空闲链表取 */
-    if (ucf != NULL && ucf->free_upstream_connections != NULL) {
-        c = ucf->free_upstream_connections;
-        ucf->free_upstream_connections = c->data;  /* c->data 存下一空闲节点 */
+    (void)ucf;
+
+    /* 先从 cycle 级空闲链表取 */
+    if (cycle->free_upstream_connections != NULL) {
+        c = cycle->free_upstream_connections;
+        cycle->free_upstream_connections = c->data;  /* c->data 存下一空闲节点 */
 
         /* 重置事件状态（handler 在调用处设置，data 在使用时设置） */
         rps_memzero(c->read,  sizeof(rps_event_t));
@@ -363,6 +366,7 @@ rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
         c->write->write = 1;
 
         c->data = NULL;
+        c->upstream_requests = 0;
         return c;
     }
 
@@ -393,12 +397,11 @@ rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
 }
 
 /*
- * 归还 upstream 后端连接到所属 upstream 块的空闲链表。
- * 关闭 fd、清理 epoll 事件和定时器，然后将连接对象挂入空闲链表供后续复用。
- * ucf 为 NULL 时（无 upstream 块的直连代理），连接直接泄漏（由 cycle->pool 回收）。
+ * 关闭后端连接的 fd、清理 epoll 事件和定时器，
+ * 然后将connection对象归还到 cycle 级空闲链表供后续复用。
  */
 void
-rps_upstream_close_peer_conn(rps_connection_t *c, rps_upstream_conf_t *ucf)
+rps_upstream_close_peer_conn(rps_connection_t *c)
 {
     if (c == NULL) return;
 
@@ -417,19 +420,17 @@ rps_upstream_close_peer_conn(rps_connection_t *c, rps_upstream_conf_t *ucf)
         c->fd = 0;
     }
 
-    /* 放入对应 upstream 块的空闲链表（通过 c->data 串联），ucf 为 NULL 则跳过 */
-    if (ucf != NULL) {
-        c->data = ucf->free_upstream_connections;
-        ucf->free_upstream_connections = c;
-    }
+    /* 归还到 cycle 级空闲链表（跨 upstream 块共享） */
+    c->data = c->cycle->free_upstream_connections;
+    c->cycle->free_upstream_connections = c;
 }
 
 /*
  * 发起非阻塞 connect 到 u->peer_addr。
+ * 在缓存没命中后执行，这个时候peer host 和port 已经获取到了
  * 使用独立分配的后端连接。
  */
-static void
-rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
+static void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
 {
     int              fd;
     struct addrinfo  hints, *res, *rp;
@@ -494,7 +495,11 @@ rps_upstream_create(rps_http_request_t *r)
     return u;
 }
 
-
+/**
+ * 进行upstream 流程
+ * 进入前需要挂载header解析钩子，request 构造钩子
+ * 还需要初始化对端的host port，如果是属于upstream 块中定义的，可省略
+ */
 void
 rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
 {
@@ -614,8 +619,7 @@ rps_upstream_send_handler(rps_event_t *ev)
     rps_event_del_timer(ev);
     r->cycle->event_engine->del_event(u->peer->write, RPS_WRITE_EVENT);
 
-    if (r->cycle->event_engine->add_event(u->peer->read,
-                                          RPS_READ_EVENT) != RPS_OK) {
+    if (r->cycle->event_engine->add_event(u->peer->read, RPS_READ_EVENT) != RPS_OK) {
         rps_upstream_finalize(r, RPS_ERROR);
         return;
     }
@@ -644,6 +648,7 @@ rps_upstream_read_handler(rps_event_t *ev)
     if (u == NULL) return;
 
     if (ev->timedout) {
+        rps_log_error(RPS_LOG_EMERG, ev -> log, 0, "bizserver down ?");
         rps_upstream_finalize(r, RPS_ERROR);
         return;
     }
@@ -658,14 +663,15 @@ rps_upstream_read_handler(rps_event_t *ev)
     }
 
     if (n == 0) {
-        /* 后端正常关闭连接 */
+        /* 后端关闭连接：标记不可缓存，防止 free_peer 将死连接放入 keepalive 池 */
+        if (u->keepalive) u->keepalive = 0;
         rps_upstream_finalize(r, RPS_OK);
         return;
     }
 
     u->response_buf->last += n;
 
-    /* ── 解析响应头 ── */
+    /* ── 解析并发送响应头 ── */
     if (!u->header_complete && u->process_header) {
         rps_int_t rc = u->process_header(r, u);
         if (rc == RPS_AGAIN) return;
@@ -674,20 +680,34 @@ rps_upstream_read_handler(rps_event_t *ev)
             return;
         }
         u->header_complete = 1;
+        /* 记录响应头解析后缓冲区中已有的 body 字节数 */
+        u->body_received = (size_t)(u->response_buf->last - u->response_buf->pos);
+    } else if (u->header_complete) {
+        /* 后续读：累加新收到的 body 字节数 */
+        u->body_received += (size_t)n;
     }
 
-    /* ── 转发响应体到客户端 ── */
-    {
-        ssize_t sent = rps_unix_send(r->connection,
-                                     u->response_buf->pos,
-                                     (size_t)(u->response_buf->last
-                                              - u->response_buf->pos));
-        if (sent < 0) {
-            if (errno == EAGAIN || errno == EINTR) return;
+    /* ── 转发响应体到客户端（由协议模块通过回调实现）── */
+    if (u->forward_body) {
+        rps_int_t rc = u->forward_body(r, u);
+        if (rc == RPS_AGAIN) {
+            /* 客户端写阻塞，forward_body 已注册 write 续传回调 */
+            return;
+        }
+        if (rc != RPS_OK) {
             rps_upstream_finalize(r, RPS_ERROR);
             return;
         }
-        u->response_buf->pos += sent;
+    }
+
+    /*
+     * Content-Length 完成判定：body 全部收完 + 全部转发完 → finalize。
+     * 不依赖后端 EOF，keep-alive 后端可以立即进入下一请求。
+     */
+    if (u->header_complete && u->content_length_n > 0
+        && u->body_received >= u->content_length_n)
+    {
+        rps_upstream_finalize(r, RPS_OK);
     }
 }
 
@@ -710,9 +730,10 @@ rps_upstream_finalize(rps_http_request_t *r, rps_int_t rc)
     rps_int_t         send_rc = RPS_OK;
 
     u = r->upstream;
+    c = r->connection;
     if (u == NULL) {
         rps_http_finalize_request(r, rc);
-        rps_http_complete_request(r->connection);
+        rps_http_complete_request(c);
         return;
     }
 
@@ -757,14 +778,13 @@ rps_upstream_finalize(rps_http_request_t *r, rps_int_t rc)
     }
 
     rps_http_finalize_request(r, rc);
-    if (c) rps_http_complete_request(c);
+    rps_http_complete_request(c);
 }
 
-/* ════════════════════════════════════════════════════════════
- * keepalive 缓存
- * ════════════════════════════════════════════════════════════ */
+
 
 /*
+ * keepalive 缓存
  * 空闲连接超时回调：从缓存中移除并释放连接。
  */
 static void
@@ -783,7 +803,7 @@ rps_upstream_cache_idle_handler(rps_event_t *ev)
      */
     ucf = peer->data;
     if (ucf == NULL) {
-        rps_upstream_close_peer_conn(peer, NULL);
+        rps_upstream_close_peer_conn(peer);
         return;
     }
 
@@ -800,7 +820,7 @@ rps_upstream_cache_idle_handler(rps_event_t *ev)
     }
 
     rps_event_del_timer(ev);
-    rps_upstream_close_peer_conn(peer, ucf);
+    rps_upstream_close_peer_conn(peer);
 }
 
 /*
@@ -819,6 +839,16 @@ rps_upstream_get_peer(rps_http_request_t *r, rps_upstream_t *u)
 
         rps_connection_t *peer = cached->connection;
 
+        /* 检查 keepalive_requests 限制：超限则关闭缓存连接并走新建路径 */
+        peer->upstream_requests++;
+        if (peer->upstream_requests > ucf->keepalive_requests) {
+            rps_event_del_timer(peer->read);
+            peer->read->timedout = 0;
+            ucf->free_peers.nelts--;
+            rps_upstream_close_peer_conn(peer);
+            goto new_peer;
+        }
+
         /* 移除空闲定时器 */
         rps_event_del_timer(peer->read);
         peer->read->timedout = 0;
@@ -830,7 +860,8 @@ rps_upstream_get_peer(rps_http_request_t *r, rps_upstream_t *u)
         return peer;
     }
 
-    /* 缓存未命中：新建连接 */
+new_peer:
+    /* 缓存未命中或超限：新建连接 */
     rps_upstream_connect(r, u);
     return u->peer;
 }
@@ -849,24 +880,24 @@ rps_upstream_free_peer(rps_upstream_t *u)
 
     if (peer == NULL) return;
 
-    /* 判断是否可缓存 */
+    /* 判断是否可缓存：需同时满足配置允许 + 后端同意 + 缓存未满 */
     if (ucf == NULL || ucf->keepalive == 0
+        || u->keepalive == 0
         || ucf->free_peers.nelts >= ucf->keepalive)
     {
         /* 不缓存：直接释放 */
-        rps_upstream_close_peer_conn(peer, ucf);
+        rps_upstream_close_peer_conn(peer);
         return;
     }
 
     /* 放入缓存栈顶 */
     cached = rps_array_push(&ucf->free_peers);
     if (cached == NULL) {
-        rps_upstream_close_peer_conn(peer, ucf);
+        rps_upstream_close_peer_conn(peer);
         return;
     }
 
     cached->connection = peer;
-    cached->requests   = 0;
     cached->idle_since = rps_current_msec();
 
     /*
