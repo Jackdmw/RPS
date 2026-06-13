@@ -12,11 +12,12 @@ struct rps_event_module_s;  /* 前置声明，避免与 rps_event.h 循环包含
 #include "rps_module.h"
 #include "rps_connection.h"
 #include "event/rps_event.h"
+#include <pthread.h>
 
 
 struct rps_cycle_s {
-    void                    **conf_ctx; 
-    
+    void                    **conf_ctx;
+
     rps_pool_t               *pool;             // 周期内存池
     rps_log_t                *log;              // 日志对象
     
@@ -38,6 +39,10 @@ struct rps_cycle_s {
     rps_connection_t         *free_upstream_connections;  // 后端连接对象空闲链表（跨 upstream 块共享）
     rps_event_t              *reads;
     rps_event_t              *writes;
+
+    /* thread 模式互斥锁 */
+    pthread_mutex_t           conn_mutex;           // 保护 free_connection
+    pthread_mutex_t           upstream_conn_mutex;  // 保护 free_upstream_connections
 
     struct rps_event_module_s *event_engine;    /* 当前使用的事件驱动引擎（epoll） */
     void                      *event_data;       /* 引擎私有数据（epoll fd / event_list） */
