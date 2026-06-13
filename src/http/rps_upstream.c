@@ -3,6 +3,7 @@
 #include "http/modules/rps_http_core_module.h"
 #include "core/rps_conf_file.h"
 #include "core/rps_log.h"
+#include "core/rps_cycle.h"
 #include "event/rps_event.h"
 
 #include <sys/socket.h>
@@ -348,12 +349,16 @@ rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
 
     (void)ucf;
 
-    /* 先从 cycle 级空闲链表取 */
+    /* 先从 cycle 级空闲链表取（thread 模式下加锁） */
+    if (cycle->if_pthread) pthread_mutex_lock(&cycle->upstream_conn_mutex);
+
     if (cycle->free_upstream_connections != NULL) {
         c = cycle->free_upstream_connections;
-        cycle->free_upstream_connections = c->data;  /* c->data 存下一空闲节点 */
+        cycle->free_upstream_connections = c->data;
 
-        /* 重置事件状态（handler 在调用处设置，data 在使用时设置） */
+        if (cycle->if_pthread) pthread_mutex_unlock(&cycle->upstream_conn_mutex);
+
+        /* 重置事件状态 */
         rps_memzero(c->read,  sizeof(rps_event_t));
         rps_memzero(c->write, sizeof(rps_event_t));
 
@@ -369,6 +374,8 @@ rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
         c->upstream_requests = 0;
         return c;
     }
+
+    if (cycle->if_pthread) pthread_mutex_unlock(&cycle->upstream_conn_mutex);
 
     /* 空闲链表空，新分配 */
     {
@@ -420,9 +427,11 @@ rps_upstream_close_peer_conn(rps_connection_t *c)
         c->fd = 0;
     }
 
-    /* 归还到 cycle 级空闲链表（跨 upstream 块共享） */
+    /* 归还到 cycle 级空闲链表（thread 模式下加锁） */
+    if (c->cycle->if_pthread) pthread_mutex_lock(&c->cycle->upstream_conn_mutex);
     c->data = c->cycle->free_upstream_connections;
     c->cycle->free_upstream_connections = c;
+    if (c->cycle->if_pthread) pthread_mutex_unlock(&c->cycle->upstream_conn_mutex);
 }
 
 /*
@@ -519,6 +528,7 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
     /* 协议回调：构造发往后端的请求 */
     if (u->create_request) {
         if (u->create_request(r, u) != RPS_OK) {
+            rps_log_error(RPS_LOG_ERR, r->log, 0, "upstream: create_request failed");
             rps_upstream_finalize(r, RPS_ERROR);
             return;
         }
@@ -527,6 +537,7 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
     /* 获取后端连接（优先 keepalive 缓存） */
     rps_upstream_get_peer(r, u);
     if (u->peer == NULL) {
+        rps_log_error(RPS_LOG_ERR, r->log, 0, "upstream: get_peer returned NULL");
         rps_upstream_finalize(r, RPS_ERROR);
         return;
     }
@@ -545,6 +556,8 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
 
     if (r->cycle->event_engine->add_event(u->peer->write,
                                           RPS_WRITE_EVENT) != RPS_OK) {
+        rps_log_error(RPS_LOG_ERR, r->log, 0,
+                      "upstream: add_event(write) failed fd=%d", u->peer->fd);
         rps_upstream_finalize(r, RPS_ERROR);
         return;
     }
