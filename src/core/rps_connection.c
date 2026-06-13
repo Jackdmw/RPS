@@ -64,26 +64,34 @@ void rps_close_listening_sockets(rps_cycle_t *cycle){
  */
 rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_listening_t *listening){
     rps_connection_t        *new_conn;
+
+    if (cycle->if_pthread) pthread_mutex_lock(&cycle->conn_mutex);
+
     if(cycle -> free_connection == NULL){
+        if (cycle->if_pthread) pthread_mutex_unlock(&cycle->conn_mutex);
         return NULL;
     }
-    else {
-        new_conn = cycle -> free_connection;        
-        new_conn->close = 0;
-        new_conn ->sent = 0;
-        new_conn -> listenling = listening;
-        new_conn -> read -> timedout = 0;
-        new_conn -> write -> timedout = 0;
 
-        rps_memzero(&new_conn->addr_text, sizeof(rps_str_t));
-
-        new_conn -> pool = rps_create_pool(1024);
-        if(new_conn -> pool == NULL){
-            return NULL;
-        }
-        cycle -> free_connection = cycle -> free_connection -> data;
-        return new_conn;
+    /* pop from free list (critical section) */
+    new_conn = cycle -> free_connection;
+    
+    if (cycle->if_pthread) pthread_mutex_unlock(&cycle->conn_mutex);
+    
+    /* initialize (outside lock) */
+    new_conn->close = 0;
+    new_conn ->sent = 0;
+    new_conn -> listenling = listening;
+    new_conn -> read -> timedout = 0;
+    new_conn -> write -> timedout = 0;
+    
+    rps_memzero(&new_conn->addr_text, sizeof(rps_str_t));
+    
+    new_conn -> pool = rps_create_pool(1024);
+    if(new_conn -> pool == NULL){
+        return NULL;
     }
+    cycle -> free_connection = cycle -> free_connection -> data;
+    return new_conn;
 }
 /**
  * 释放连接对象的一切，并且还回cycle
@@ -91,9 +99,11 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
 void rps_free_connection(rps_connection_t *c){
     rps_log_error(RPS_LOG_INFO, c -> cycle -> log, 0, "free connection object");
     rps_close_connection(c);
+
+    if (c->cycle->if_pthread) pthread_mutex_lock(&c->cycle->conn_mutex);
     c -> data = c -> cycle -> free_connection;
     c -> cycle -> free_connection = c;
-    
+    if (c->cycle->if_pthread) pthread_mutex_unlock(&c->cycle->conn_mutex);
 }
 /**
  * 用于关闭连接，但是，不会还给连接池
