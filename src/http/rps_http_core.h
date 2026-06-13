@@ -147,7 +147,6 @@ void rps_http_wait_request_handler(rps_event_t *ev);
 rps_int_t rps_http_parse_request_line(rps_http_request_t *r);
 rps_int_t rps_http_parse_headers(rps_http_request_t *r);
 
-// 发送响应
 rps_int_t rps_http_add_response_header(rps_http_request_t *r, rps_str_t key, rps_str_t value);
 void      rps_http_set_content_length(rps_http_request_t *r, size_t len);
 rps_int_t rps_http_send_header(rps_http_request_t *r);

@@ -28,8 +28,7 @@ rps_http_set_content_length(rps_http_request_t *r, size_t len)
 /*
  * 往 headers_out 追加一个 header
  */
-rps_int_t
-rps_http_add_response_header(rps_http_request_t *r, rps_str_t key, rps_str_t value)
+rps_int_t rps_http_add_response_header(rps_http_request_t *r, rps_str_t key, rps_str_t value)
 {
     rps_http_header_kv_t *h;
 
