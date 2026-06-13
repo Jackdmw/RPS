@@ -141,6 +141,9 @@ struct rps_upstream_s {
     rps_int_t (*process_header)(rps_http_request_t *r, rps_upstream_t *u);
     rps_int_t (*forward_body)(rps_http_request_t *r, rps_upstream_t *u);
 
+    /* ── 协议模块私有上下文（proxy: ws_ctx / fastcgi: fcgi_ctx 等）── */
+    void                        *module_ctx;
+
     /* ── 响应体接收追踪（Content-Length 完成判定，不依赖后端 EOF）── */
     size_t                       content_length_n;  /* 后端 Content-Length，0=不存在/未解析 */
     size_t                       body_received;     /* 已收到 body 字节数 */
