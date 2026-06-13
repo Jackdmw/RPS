@@ -188,6 +188,9 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
             else if (rps_strcmp_with_cstr(key, "connection") == RPS_STRING_EQUAL){
                 r -> headers_in.connection.value =value;
             }
+            else if (rps_strcmp_with_cstr(key, "upgrade") == RPS_STRING_EQUAL){
+                r -> headers_in.upgrade.value =value;
+            }
             else {
                 new_header = rps_list_push(&r -> headers_in.headers);
                 new_header->key = key;
