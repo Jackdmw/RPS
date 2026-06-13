@@ -76,12 +76,9 @@ static rps_int_t
 rps_epoll_init_process(rps_cycle_t *cycle)
 {
     
-    /**
-     * 判断是否事件机制使用epoll
+    /*
+     * 线程模式下 epoll 仍用于 accept，不能跳过初始化。
      */
-    if (cycle -> if_pthread == 1){
-        return RPS_OK;
-    }
     if (epoll_fd >= 0 ) {
         return RPS_OK;  /* 已初始化 */
     }
