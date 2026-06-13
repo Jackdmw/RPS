@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "http/modules/rps_http_proxy_module.h"
+#include "thread/rps_thread.h"
 typedef struct
 {
     rps_str_t   conf_file;
@@ -403,6 +404,12 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     if (rps_worker_process_init(cycle) == RPS_ERROR){
         return ;
     }
+
+    /* thread 模式互斥锁初始化 */
+    if (cycle->if_pthread) {
+        rps_thread_mutex_init(cycle);
+    }
+
     /*
      * 注册 worker 进程信号处理
      */
@@ -418,36 +425,8 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     sigaction(SIGTERM, &sa, NULL);
 
     /*
-     * 多线程模式：简单 accept + 每连接一线程，
-     * 只需要做websocket 和 http 功能实现，后面考虑怎么利用现有的事件机制实现
-     * 
-     * 尽可能地复用，减少心智负担。
-     */
-    if (cycle->if_pthread == 1) {
-        listening = cycle->listening.elts;
-        for (;;) {
-            rps_connection_t    *conn;
-            struct sockaddr      sa;
-            socklen_t            len = sizeof(sa);
-            rps_fd_t             conn_fd;
-
-            conn_fd = accept(listening->fd, &sa, &len);
-            if (conn_fd == -1) {
-                continue;
-            }
-            conn = rps_get_connection(cycle, cycle->log, listening);
-            if (conn == NULL) {
-                close(conn_fd);
-                continue;
-            }
-            conn->fd = conn_fd;
-            pthread_t new_thread;
-            /* TODO: 线程处理逻辑 */
-        }
-    }
-
-    /*
-     * 事件驱动模式：epoll + 非阻塞 I/O
+     * 事件驱动模式：epoll accept + 非阻塞 I/O。
+     * 线程模式的分叉在 rps_event_accept 中根据 if_pthread 处理。
      */
     engine = cycle->event_engine;
     if (engine == NULL) {
@@ -573,6 +552,18 @@ rps_event_accept(rps_event_t *ev)
     }
     new_c->data = r;
     rps_log_error(RPS_LOG_INFO, rps_cycle -> log, 0, "accept new connection");
+
+    if (rps_cycle->if_pthread) {
+        /* 线程模式：连接交给独立线程，epoll 不再管理此 fd */
+        if (rps_thread_spawn(rps_cycle, new_c, r) != RPS_OK) {
+            rps_log_error(RPS_LOG_ERR, rps_cycle->log, 0,
+                          "failed to spawn thread");
+            rps_free_connection(new_c);
+            return;
+        }
+        return;
+    }
+
     new_c->read->handler = rps_http_wait_request_handler;
 
     if (rps_cycle->event_engine->add_event(new_c->read, RPS_READ_EVENT) != RPS_OK) {
