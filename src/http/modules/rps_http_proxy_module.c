@@ -42,6 +42,29 @@ static void rps_http_proxy_header_write_continue(rps_event_t *ev);
 static void rps_http_proxy_body_write_continue(rps_event_t *ev);
 
 
+/* WS 双向转发缓冲区 */
+#define WS_BUF_SIZE 65536
+
+typedef struct {
+    rps_buf_t           *to_upstream;   /* 客户端→后端 待发送缓冲 */
+    rps_buf_t           *to_client;     /* 后端→客户端 待发送缓冲 */
+    unsigned             client_closed:1;
+    unsigned             upstream_closed:1;
+} rps_ws_ctx_t;
+
+/* WS upstream 协议回调 */
+static rps_int_t ws_create_request(rps_http_request_t *r, rps_upstream_t *u);
+static rps_int_t ws_process_header(rps_http_request_t *r, rps_upstream_t *u);
+
+/* WS 双向转发 event handler */
+static void ws_client_read_handler(rps_event_t *ev);
+static void ws_client_write_handler(rps_event_t *ev);
+static void ws_upstream_read_handler(rps_event_t *ev);
+static void ws_upstream_write_handler(rps_event_t *ev);
+
+static void ws_close(rps_http_request_t *r);
+
+
 rps_command_t rps_http_proxy_module_commands[] = {
     {
         rps_string("proxy_pass"),
@@ -437,10 +460,44 @@ rps_http_proxy_handler(rps_http_request_t *r)
     u->send_timeout    = plcf->send_timeout;
     u->read_timeout    = plcf->read_timeout;
 
-    /* 协议回调 */
-    u->create_request = rps_http_proxy_create_request;
-    u->process_header = rps_http_proxy_process_header;
-    u->forward_body   = rps_http_proxy_forward_body;
+    /*
+     * 检测 WebSocket 升级请求：Upgrade: websocket + Connection 含 "upgrade"
+     * 命中则走 WS 透明代理路径，否则走标准 HTTP 代理。
+     */
+    {
+        unsigned is_ws = 0;
+
+        if (r->headers_in.upgrade.value.data != NULL
+            && r->headers_in.connection.value.data != NULL)
+        {
+            rps_str_lowercase(r->headers_in.upgrade.value);
+            if (rps_strcmp_with_cstr(r->headers_in.upgrade.value, "websocket"))
+            {
+                rps_str_lowercase(r->headers_in.connection.value);
+                if (r->headers_in.connection.value.len >= 7)
+                {
+                    u_char *p = r->headers_in.connection.value.data;
+                    /**
+                     * connection 的值可以是一个列表
+                     */
+                    u_char *end = p + r->headers_in.connection.value.len - 6;
+                    for (; p <= end; p++) {
+                        if (memcmp(p, "upgrade", 7) == 0) { is_ws = 1; break; }
+                    }
+                }
+            }
+        }
+
+        if (is_ws) {
+            u->create_request = ws_create_request;
+            u->process_header = ws_process_header;
+            u->forward_body   = NULL;
+        } else {
+            u->create_request = rps_http_proxy_create_request;
+            u->process_header = rps_http_proxy_process_header;
+            u->forward_body   = rps_http_proxy_forward_body;
+        }
+    }
 
     r->upstream = u;
 
@@ -893,6 +950,646 @@ rps_http_proxy_body_write_continue(rps_event_t *ev)
         rps_upstream_finalize(r, RPS_ERROR);
     } else {
         c->write->handler = rps_http_proxy_body_write_continue;
+    }
+}
+
+/* 
+ * WebSocket 代理实现 (Phase 1: 透明转发)
+ */
+
+/*
+ * upstream 回调：构造 WebSocket 升级请求
+ * 透传 Upgrade / Connection / Sec-WebSocket-Key / Version，其余同 HTTP 代理
+ */
+static rps_int_t
+ws_create_request(rps_http_request_t *r, rps_upstream_t *u)
+{
+    rps_http_proxy_loc_conf_t  *plcf;
+    rps_http_proxy_header_t    *ph;
+    rps_http_header_kv_t       *hdr;
+    rps_list_part_t            *part;
+    u_char                     *p;
+    rps_str_t                   ver;
+    rps_uint_t                  i;
+
+    plcf = r->loc_conf[rps_http_proxy_module.ctx_index];
+
+    u->request_bufs = rps_buf_create(r->pool, 8192);
+    if (u->request_bufs == NULL) return RPS_ERROR;
+
+    p = u->request_bufs->pos;
+
+    /* ── 请求行 ── */
+    if (plcf->proxy_method.data != NULL) {
+        p = rps_cpymem(p, plcf->proxy_method.data, plcf->proxy_method.len);
+    } else {
+        p = rps_cpymem(p, r->method.data, r->method.len);
+    }
+    *p++ = ' ';
+
+    if (plcf->upstream_uri.data != NULL && plcf->upstream_uri.len > 0) {
+        p = rps_cpymem(p, plcf->upstream_uri.data, plcf->upstream_uri.len);
+    } else {
+        p = rps_cpymem(p, r->uri.data, r->uri.len);
+    }
+    if (r->args.len > 0) {
+        *p++ = '?';
+        p = rps_cpymem(p, r->args.data, r->args.len);
+    }
+    *p++ = ' ';
+
+    ver = plcf->proxy_http_version;
+    if (ver.data != NULL) {
+        p = rps_cpymem(p, "HTTP/", 5);
+        p = rps_cpymem(p, ver.data, ver.len);
+    } else {
+        p = rps_cpymem(p, "HTTP/1.1", 8);
+    }
+    *p++ = '\r'; *p++ = '\n';
+
+    /* ── Host ── */
+    p = rps_cpymem(p, "Host: ", 6);
+    p = rps_cpymem(p, plcf->upstream_host.data, plcf->upstream_host.len);
+    if (plcf->upstream_port != 80) {
+        p += snprintf((char *)p, 8, ":%u", (unsigned int)plcf->upstream_port);
+    }
+    *p++ = '\r'; *p++ = '\n';
+
+    /* ── X-Real-IP / X-Forwarded-For ── */
+    if (r->connection->addr_text.data != NULL) {
+        unsigned    has_real_ip  = 0;
+        unsigned    has_xff      = 0;
+        rps_str_t   xff_orig     = {0, NULL};
+
+        rps_http_header_kv_t *sh;
+        rps_list_part_t      *sp;
+        rps_uint_t            k;
+
+        sp = &r->headers_in.headers.part;
+        while (sp != NULL) {
+            sh = (rps_http_header_kv_t *)sp->elts;
+            for (k = 0; k < sp->nelts; k++) {
+                if (!has_real_ip
+                    && rps_strcmp_with_cstr(sh[k].key, "x-real-ip"))
+                    { has_real_ip = 1; }
+                if (!has_xff
+                    && rps_strcmp_with_cstr(sh[k].key, "x-forwarded-for"))
+                    { has_xff = 1; xff_orig = sh[k].value; }
+                if (has_real_ip && has_xff) goto ws_xff_done;
+            }
+            sp = sp->next;
+        }
+        ws_xff_done:;
+
+        if (!has_real_ip) {
+            p = rps_cpymem(p, "X-Real-IP: ", 11);
+            p = rps_cpymem(p, r->connection->addr_text.data,
+                           r->connection->addr_text.len);
+            *p++ = '\r'; *p++ = '\n';
+        }
+
+        p = rps_cpymem(p, "X-Forwarded-For: ", 17);
+        if (has_xff && xff_orig.data != NULL) {
+            p = rps_cpymem(p, xff_orig.data, xff_orig.len);
+            *p++ = ','; *p++ = ' ';
+        }
+        p = rps_cpymem(p, r->connection->addr_text.data,
+                       r->connection->addr_text.len);
+        *p++ = '\r'; *p++ = '\n';
+    }
+
+    /* ── proxy_set_header ── */
+    ph = plcf->set_headers.elts;
+    for (i = 0; i < plcf->set_headers.nelts; i++) {
+        p = rps_cpymem(p, ph[i].key.data,   ph[i].key.len);
+        *p++ = ':'; *p++ = ' ';
+        p = rps_cpymem(p, ph[i].value.data, ph[i].value.len);
+        *p++ = '\r'; *p++ = '\n';
+    }
+
+    /* ── 透传 WS 关键头：Upgrade / Connection / Key / Version ── */
+    if (r->headers_in.upgrade.value.data != NULL) {
+        p = rps_cpymem(p, "Upgrade: ", 9);
+        p = rps_cpymem(p, r->headers_in.upgrade.value.data,
+                       r->headers_in.upgrade.value.len);
+        *p++ = '\r'; *p++ = '\n';
+    }
+    p = rps_cpymem(p, "Connection: Upgrade\r\n", 20);
+
+    /* ── Sec-WebSocket-Key / Version ── */
+    {
+        rps_http_header_kv_t *sh;
+        rps_list_part_t      *sp;
+        rps_uint_t            k;
+        unsigned              has_key = 0, has_ver = 0;
+
+        sp = &r->headers_in.headers.part;
+        while (sp != NULL) {
+            sh = (rps_http_header_kv_t *)sp->elts;
+            for (k = 0; k < sp->nelts; k++) {
+                if (!has_key
+                    && rps_strcmp_with_cstr(sh[k].key, "sec-websocket-key"))
+                {
+                    p = rps_cpymem(p, "Sec-WebSocket-Key: ", 19);
+                    p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
+                    *p++ = '\r'; *p++ = '\n';
+                    has_key = 1;
+                }
+                if (!has_ver
+                    && rps_strcmp_with_cstr(sh[k].key, "sec-websocket-version"))
+                {
+                    p = rps_cpymem(p, "Sec-WebSocket-Version: ", 23);
+                    p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
+                    *p++ = '\r'; *p++ = '\n';
+                    has_ver = 1;
+                }
+                if (has_key && has_ver) goto ws_sec_done;
+            }
+            sp = sp->next;
+        }
+        ws_sec_done:;
+    }
+
+    /* ── 透传 Sec-WebSocket-Protocol / Extensions (如果存在) ── */
+    {
+        rps_http_header_kv_t *sh;
+        rps_list_part_t      *sp;
+        rps_uint_t            k;
+
+        sp = &r->headers_in.headers.part;
+        while (sp != NULL) {
+            sh = (rps_http_header_kv_t *)sp->elts;
+            for (k = 0; k < sp->nelts; k++) {
+                if (rps_strcmp_with_cstr(sh[k].key, "sec-websocket-protocol"))
+                {
+                    p = rps_cpymem(p, "Sec-WebSocket-Protocol: ", 25);
+                    p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
+                    *p++ = '\r'; *p++ = '\n';
+                }
+                if (rps_strcmp_with_cstr(sh[k].key, "sec-websocket-extensions"))
+                {
+                    p = rps_cpymem(p, "Sec-WebSocket-Extensions: ", 27);
+                    p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
+                    *p++ = '\r'; *p++ = '\n';
+                }
+            }
+            sp = sp->next;
+        }
+    }
+
+    /* ── 转发其他客户端 header（去重）── */
+    if (plcf->pass_request_headers) {
+        part = &r->headers_in.headers.part;
+        while (part != NULL) {
+            hdr = (rps_http_header_kv_t *)part->elts;
+            for (i = 0; i < part->nelts; i++) {
+                rps_uint_t  j;
+                rps_uint_t  h;
+                unsigned    skip = 0;
+
+                if (rps_strcmp_with_cstr(hdr[i].key, "host")
+                    || rps_strcmp_with_cstr(hdr[i].key, "connection")
+                    || rps_strcmp_with_cstr(hdr[i].key, "x-forwarded-for")
+                    || rps_strcmp_with_cstr(hdr[i].key, "upgrade")
+                    || rps_strcmp_with_cstr(hdr[i].key, "sec-websocket-key")
+                    || rps_strcmp_with_cstr(hdr[i].key, "sec-websocket-version")
+                    || rps_strcmp_with_cstr(hdr[i].key, "sec-websocket-protocol")
+                    || rps_strcmp_with_cstr(hdr[i].key, "sec-websocket-extensions"))
+                    { continue; }
+
+                rps_hash_str_lc(hdr[i].key, h);
+                for (j = 0; j < plcf->set_headers.nelts; j++) {
+                    if (h == ph[j].key_hash
+                        && rps_strcmp(hdr[i].key, ph[j].key))
+                        { skip = 1; break; }
+                }
+                if (skip) continue;
+
+                p = rps_cpymem(p, hdr[i].key.data,   hdr[i].key.len);
+                *p++ = ':'; *p++ = ' ';
+                p = rps_cpymem(p, hdr[i].value.data, hdr[i].value.len);
+                *p++ = '\r'; *p++ = '\n';
+            }
+            part = part->next;
+        }
+    }
+
+    /* ── 空行 ── */
+    *p++ = '\r'; *p++ = '\n';
+
+    u->request_bufs->last = p;
+    return RPS_OK;
+}
+
+/*
+ * upstream 回调：解析后端 101 响应，透传给客户端，切换为双向转发模式
+ */
+static rps_int_t
+ws_process_header(rps_http_request_t *r, rps_upstream_t *u)
+{
+    u_char   *p, *end, *header_end;
+    rps_int_t wrc;
+
+    p   = u->response_buf->pos;
+    end = u->response_buf->last;
+
+    /* 找 \r\n\r\n */
+    header_end = NULL;
+    {
+        u_char *s = p;
+        while (s + 3 < end) {
+            if (s[0] == '\r' && s[1] == '\n'
+                && s[2] == '\r' && s[3] == '\n') {
+                header_end = s;
+                break;
+            }
+            s++;
+        }
+    }
+
+    if (header_end == NULL) return RPS_AGAIN;
+
+    /* ── 检查 101 status line ── */
+    {
+        u_char *cr = p;
+        while (cr < header_end && *cr != '\r') cr++;
+
+        /* status line 必须包含 "101" */
+        if (cr - p < 12) {
+            rps_log_error(RPS_LOG_ERR, r->log, 0,
+                          "WS: backend response too short for 101");
+            return RPS_ERROR;
+        }
+        /* "HTTP/x.x 101 ..." — 在 status line 中找 " 101 " */
+        {
+            u_char *sp = p;
+            while (sp < cr && *sp != ' ') sp++;
+            if (sp < cr) sp++;
+            if (sp + 3 <= cr
+                && sp[0] == '1' && sp[1] == '0' && sp[2] == '1')
+            {
+                /* 101 OK */
+            } else {
+                rps_log_error(RPS_LOG_ERR, r->log, 0,
+                              "WS: backend did not return 101");
+                return RPS_ERROR;
+            }
+        }
+    }
+
+    /* ── 发送 101 响应给客户端 ── */
+    {
+        /* 把响应头填充到 r->headers_out */
+        u_char *line = p;
+        /* 跳过 status line 的 \r\n */
+        while (line < header_end && *line != '\r') line++;
+        line += 2;
+
+        while (line < header_end) {
+            u_char *cr = line;
+            while (cr < header_end && *cr != '\r') cr++;
+            if (cr >= header_end) break;
+
+            u_char *colon = line;
+            while (colon < cr && *colon != ':') colon++;
+            if (colon < cr) {
+                rps_str_t key, value;
+                key.data = line;
+                key.len  = (rps_uint_t)(colon - line);
+                colon++;
+                while (colon < cr && *colon == ' ') colon++;
+                value.data = colon;
+                value.len  = (rps_uint_t)(cr - colon);
+
+                /* 状态行放到 status */
+                if (rps_strcmp_with_cstr(key, "upgrade")
+                    || rps_strcmp_with_cstr(key, "connection")
+                    || rps_strcmp_with_cstr(key, "sec-websocket-accept"))
+                {
+                    /* 关键 WS 头：通过 header_filter 写出 */
+                    rps_http_add_response_header(r, key, value);
+                }
+            }
+            line = cr + 2;
+        }
+    }
+
+    /* 移动 buffer position 穿过头部 */
+    u->response_buf->pos = header_end + 4;
+
+    /* 设置 101 状态 */
+    r->headers_out.status.value = (rps_str_t)rps_string("101 Switching Protocols");
+
+    /* 发送 101 响应头给客户端 */
+    wrc = rps_http_send_header(r);
+    if (wrc == RPS_AGAIN) {
+        r->connection->write->handler = rps_http_proxy_header_write_continue;
+        return RPS_AGAIN;
+    }
+    if (wrc != RPS_OK) return RPS_ERROR;
+
+    /*
+     * 101 发送完毕 → 初始化 WS 上下文并切换为双向转发模式。
+     * 此后不再走 HTTP 过滤链，数据裸转。
+     */
+    {
+        rps_ws_ctx_t *ctx;
+
+        ctx = rps_pcalloc(r->pool, sizeof(rps_ws_ctx_t));
+        if (ctx == NULL) return RPS_ERROR;
+
+        ctx->to_upstream = rps_buf_create(r->pool, WS_BUF_SIZE);
+        ctx->to_client   = rps_buf_create(r->pool, WS_BUF_SIZE);
+        if (ctx->to_upstream == NULL || ctx->to_client == NULL)
+            return RPS_ERROR;
+
+        u->module_ctx = ctx;
+
+        /* 客户端读 → 转发到后端 */
+        r->connection->read->handler = ws_client_read_handler;
+        r->connection->read->data    = r->connection;
+
+        /* 后端读 → 转发到客户端 */
+        u->peer->read->handler = ws_upstream_read_handler;
+        u->peer->read->data    = u->peer;
+
+        /* 删除后端读事件的 HTTP 超时，WS 有自己的生命周期 */
+        rps_event_del_timer(u->peer->read);
+
+        rps_log_error(RPS_LOG_INFO, r->log, 0,
+                      "WS: upgrade complete, bidirectional mode active");
+    }
+
+    return RPS_OK;
+}
+
+
+/*
+ * 客户端→后端：读客户端数据，写后端
+ */
+static void
+ws_client_read_handler(rps_event_t *ev)
+{
+    rps_connection_t   *c = ev->data;
+    rps_http_request_t *r;
+    rps_upstream_t     *u;
+    rps_ws_ctx_t       *ctx;
+    u_char              buf[WS_BUF_SIZE];
+    ssize_t             n, sent;
+
+    if (c == NULL) return;
+    r = c->data;
+    if (r == NULL || r->upstream == NULL) {
+        ws_close(r);
+        return;
+    }
+    u   = r->upstream;
+    ctx = u->module_ctx;
+    if (ctx == NULL) return;
+
+    n = recv(c->fd, buf, sizeof(buf), 0);
+    if (n <= 0) {
+        /* 客户端关闭或出错 */
+        ctx->client_closed = 1;
+        if (u->peer && u->peer->fd > 0) {
+            shutdown(u->peer->fd, SHUT_WR);
+            rps_event_del_timer(u->peer->read);
+        }
+        if (ev->active)
+            c->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
+        ws_close(r);
+        return;
+    }
+
+    /* 写后端 */
+    sent = send(u->peer->fd, buf, (size_t)n, 0);
+    if (sent < n) {
+        if (sent < 0 && (errno == EAGAIN || errno == EINTR)) sent = 0;
+
+        /* 部分发送：剩余数据存入缓冲，注册写事件 */
+        size_t remain = (size_t)n - (sent > 0 ? (size_t)sent : 0);
+        if (remain > 0 && ctx->to_upstream) {
+            memcpy(ctx->to_upstream->pos, buf + (sent > 0 ? sent : 0), remain);
+            ctx->to_upstream->last = ctx->to_upstream->pos + remain;
+
+            /* 暂停客户端读（背压），等后端写就绪 */
+            if (ev->active)
+                c->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
+
+            u->peer->write->handler = ws_client_write_handler;
+            u->peer->write->data    = u->peer;
+            if (!u->peer->write->active)
+                c->cycle->event_engine->add_event(u->peer->write,
+                                                   RPS_WRITE_EVENT);
+        }
+    }
+}
+
+/*
+ * 后端→客户端：读后端数据，写客户端
+ */
+static void
+ws_upstream_read_handler(rps_event_t *ev)
+{
+    rps_connection_t   *c = ev->data;
+    rps_http_request_t *r;
+    rps_upstream_t     *u;
+    rps_ws_ctx_t       *ctx;
+    u_char              buf[WS_BUF_SIZE];
+    ssize_t             n, sent;
+
+    if (c == NULL) return;
+    r = c->data;
+    if (r == NULL || r->upstream == NULL) {
+        ws_close(r);
+        return;
+    }
+    u   = r->upstream;
+    ctx = u->module_ctx;
+    if (ctx == NULL) return;
+
+    n = recv(c->fd, buf, sizeof(buf), 0);
+    if (n <= 0) {
+        /* 后端关闭或出错 */
+        ctx->upstream_closed = 1;
+        if (r->connection && r->connection->fd > 0) {
+            shutdown(r->connection->fd, SHUT_WR);
+            rps_event_del_timer(r->connection->read);
+        }
+        if (ev->active)
+            c->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
+        ws_close(r);
+        return;
+    }
+
+    /* 写客户端 */
+    sent = send(r->connection->fd, buf, (size_t)n, 0);
+    if (sent < n) {
+        if (sent < 0 && (errno == EAGAIN || errno == EINTR)) sent = 0;
+
+        size_t remain = (size_t)n - (sent > 0 ? (size_t)sent : 0);
+        if (remain > 0 && ctx->to_client) {
+            memcpy(ctx->to_client->pos, buf + (sent > 0 ? sent : 0), remain);
+            ctx->to_client->last = ctx->to_client->pos + remain;
+
+            if (ev->active)
+                c->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
+
+            r->connection->write->handler = ws_upstream_write_handler;
+            r->connection->write->data    = r->connection;
+            if (!r->connection->write->active)
+                c->cycle->event_engine->add_event(r->connection->write,
+                                                   RPS_WRITE_EVENT);
+        }
+    }
+}
+
+/*
+ * 客户端→后端写续传
+ */
+static void
+ws_client_write_handler(rps_event_t *ev)
+{
+    rps_connection_t   *c = ev->data;
+    rps_http_request_t *r;
+    rps_upstream_t     *u;
+    rps_ws_ctx_t       *ctx;
+    ssize_t             sent;
+
+    if (c == NULL) return;
+    r = c->data;
+    if (r == NULL || r->upstream == NULL) return;
+    u   = r->upstream;
+    ctx = u->module_ctx;
+    if (ctx == NULL || ctx->to_upstream == NULL) return;
+
+    if (ctx->to_upstream->pos >= ctx->to_upstream->last) {
+        /* 缓冲已空，恢复客户端读 */
+        c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
+        r->connection->read->handler = ws_client_read_handler;
+        r->connection->read->data    = r->connection;
+        if (!r->connection->read->active)
+            c->cycle->event_engine->add_event(r->connection->read,
+                                               RPS_READ_EVENT);
+        return;
+    }
+
+    sent = send(c->fd, ctx->to_upstream->pos,
+                (size_t)(ctx->to_upstream->last - ctx->to_upstream->pos), 0);
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EINTR) return;
+        ctx->client_closed = 1;
+        ws_close(r);
+        return;
+    }
+    ctx->to_upstream->pos += sent;
+
+    if (ctx->to_upstream->pos >= ctx->to_upstream->last) {
+        /* 缓冲已空，恢复客户端读 */
+        c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
+        r->connection->read->handler = ws_client_read_handler;
+        r->connection->read->data    = r->connection;
+        if (!r->connection->read->active)
+            c->cycle->event_engine->add_event(r->connection->read,
+                                               RPS_READ_EVENT);
+    }
+}
+
+/*
+ * 后端→客户端写续传
+ */
+static void
+ws_upstream_write_handler(rps_event_t *ev)
+{
+    rps_connection_t   *c = ev->data;
+    rps_http_request_t *r;
+    rps_upstream_t     *u;
+    rps_ws_ctx_t       *ctx;
+    ssize_t             sent;
+
+    if (c == NULL) return;
+    r = c->data;
+    if (r == NULL || r->upstream == NULL) return;
+    u   = r->upstream;
+    ctx = u->module_ctx;
+    if (ctx == NULL || ctx->to_client == NULL) return;
+
+    if (ctx->to_client->pos >= ctx->to_client->last) {
+        c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
+        u->peer->read->handler = ws_upstream_read_handler;
+        u->peer->read->data    = u->peer;
+        if (!u->peer->read->active)
+            c->cycle->event_engine->add_event(u->peer->read, RPS_READ_EVENT);
+        return;
+    }
+
+    sent = send(c->fd, ctx->to_client->pos,
+                (size_t)(ctx->to_client->last - ctx->to_client->pos), 0);
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EINTR) return;
+        ctx->upstream_closed = 1;
+        ws_close(r);
+        return;
+    }
+    ctx->to_client->pos += sent;
+
+    if (ctx->to_client->pos >= ctx->to_client->last) {
+        c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
+        u->peer->read->handler = ws_upstream_read_handler;
+        u->peer->read->data    = u->peer;
+        if (!u->peer->read->active)
+            c->cycle->event_engine->add_event(u->peer->read, RPS_READ_EVENT);
+    }
+}
+
+/*
+ * 关闭 WS 连接：清理两侧，最终化 request
+ */
+static void
+ws_close(rps_http_request_t *r)
+{
+    rps_upstream_t   *u;
+    rps_connection_t *c;
+    rps_ws_ctx_t     *ctx;
+
+    if (r == NULL) return;
+
+    u = r->upstream;
+    c = r->connection;
+
+    if (u) {
+        ctx = u->module_ctx;
+
+        /* 两端都已关闭 → 最终清理 */
+        if (ctx && ctx->client_closed && ctx->upstream_closed) {
+            if (u->peer) {
+                if (u->peer->write->active)
+                    c->cycle->event_engine->del_event(u->peer->write,
+                                                       RPS_WRITE_EVENT);
+                if (u->peer->read->active)
+                    c->cycle->event_engine->del_event(u->peer->read,
+                                                       RPS_READ_EVENT);
+                rps_event_del_timer(u->peer->read);
+                rps_event_del_timer(u->peer->write);
+                rps_upstream_close_peer_conn(u->peer);
+                u->peer = NULL;
+            }
+
+            r->upstream = NULL;
+            if (c) {
+                if (c->read->active)
+                    c->cycle->event_engine->del_event(c->read, RPS_READ_EVENT);
+                if (c->write && c->write->active)
+                    c->cycle->event_engine->del_event(c->write, RPS_WRITE_EVENT);
+            }
+
+            /* 必须在 finalize（会销毁 r）之前取出 c */
+            {
+                rps_connection_t *conn = c;
+                rps_http_finalize_request(r, RPS_OK);
+                if (conn) rps_http_complete_request(conn);
+            }
+        }
     }
 }
 
