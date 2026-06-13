@@ -9,6 +9,7 @@
 #include "core/rps_connection.h"
 #include "http/rps_http_phases.h"
 #include "core/rps_log.h"
+#include "thread/rps_thread.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -422,6 +423,7 @@ rps_http_proxy_handler(rps_http_request_t *r)
 
     u = rps_upstream_create(r);
     if (u == NULL) {
+        rps_log_error(RPS_LOG_ALERT, r->log, 0, "proxy: upstream_create FAILED");
         r->headers_out.status.value = (rps_str_t)rps_string("502 Bad Gateway");
         rps_int_t send_rc = rps_http_send_response(r);
         if (send_rc == RPS_AGAIN) {
@@ -460,6 +462,7 @@ rps_http_proxy_handler(rps_http_request_t *r)
     u->send_timeout    = plcf->send_timeout;
     u->read_timeout    = plcf->read_timeout;
 
+    /* TEMP: disable WS detection, force HTTP proxy path */
     /*
      * 检测 WebSocket 升级请求：Upgrade: websocket + Connection 含 "upgrade"
      * 命中则走 WS 透明代理路径，否则走标准 HTTP 代理。
@@ -477,9 +480,6 @@ rps_http_proxy_handler(rps_http_request_t *r)
                 if (r->headers_in.connection.value.len >= 7)
                 {
                     u_char *p = r->headers_in.connection.value.data;
-                    /**
-                     * connection 的值可以是一个列表
-                     */
                     u_char *end = p + r->headers_in.connection.value.len - 6;
                     for (; p <= end; p++) {
                         if (memcmp(p, "upgrade", 7) == 0) { is_ws = 1; break; }
@@ -500,6 +500,20 @@ rps_http_proxy_handler(rps_http_request_t *r)
     }
 
     r->upstream = u;
+
+    if (r->cycle->if_pthread) {
+        /*
+         * 线程模式：阻塞执行 upstream，不走事件驱动。
+         * 返回 RPS_AGAIN 阻止阶段引擎 auto-finalize——线程 worker
+         * 在 run_phases 返回后自行管理 keepalive 循环和 finalize。
+         */
+        if (u->create_request == ws_create_request) {
+            rps_thread_ws_start(r, u);
+        } else {
+            rps_thread_proxy_run(r, u);
+        }
+        return RPS_AGAIN;
+    }
 
     /* 启动 upstream。失败时 upstream_finalize 自动发送错误响应 + 清理 */
     rps_upstream_init(r, u);
@@ -1214,6 +1228,9 @@ ws_process_header(rps_http_request_t *r, rps_upstream_t *u)
         u_char *cr = p;
         while (cr < header_end && *cr != '\r') cr++;
 
+        rps_log_error(RPS_LOG_ALERT, r->log, 0,
+                      "WS: status line = \"%.*s\"", (int)(cr - p), p);
+
         /* status line 必须包含 "101" */
         if (cr - p < 12) {
             rps_log_error(RPS_LOG_ERR, r->log, 0,
@@ -1231,7 +1248,8 @@ ws_process_header(rps_http_request_t *r, rps_upstream_t *u)
                 /* 101 OK */
             } else {
                 rps_log_error(RPS_LOG_ERR, r->log, 0,
-                              "WS: backend did not return 101");
+                              "WS: backend did not return 101 (sp[0..2]='%c%c%c')",
+                              sp[0], sp[1], sp[2]);
                 return RPS_ERROR;
             }
         }
