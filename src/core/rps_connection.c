@@ -72,25 +72,31 @@ rps_connection_t *rps_get_connection(rps_cycle_t *cycle, rps_log_t *log, rps_lis
         return NULL;
     }
 
-    /* pop from free list (critical section) */
+    /* pop from free list and save next pointer (critical section) */
     new_conn = cycle -> free_connection;
-    
+    cycle -> free_connection = new_conn->data;
+
     if (cycle->if_pthread) pthread_mutex_unlock(&cycle->conn_mutex);
-    
-    /* initialize (outside lock) */
+
+    /* initialize (outside lock, may fail) */
     new_conn->close = 0;
     new_conn ->sent = 0;
     new_conn -> listenling = listening;
     new_conn -> read -> timedout = 0;
     new_conn -> write -> timedout = 0;
-    
+
     rps_memzero(&new_conn->addr_text, sizeof(rps_str_t));
-    
+
     new_conn -> pool = rps_create_pool(1024);
     if(new_conn -> pool == NULL){
+        /* 分配失败：归还连接回空闲链表 */
+        if (cycle->if_pthread) pthread_mutex_lock(&cycle->conn_mutex);
+        new_conn->data = cycle->free_connection;
+        cycle->free_connection = new_conn;
+        if (cycle->if_pthread) pthread_mutex_unlock(&cycle->conn_mutex);
         return NULL;
     }
-    cycle -> free_connection = cycle -> free_connection -> data;
+
     return new_conn;
 }
 /**
