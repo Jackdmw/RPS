@@ -138,5 +138,4 @@ src/
 ## TODO
 
 
-- [ ] HTTP 响应体 Content-Length 精确跟踪
 - [ ] 动态 peer 管理 (DNS 解析刷新)
