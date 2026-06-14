@@ -149,6 +149,7 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r);
 
 rps_int_t rps_http_add_response_header(rps_http_request_t *r, rps_str_t key, rps_str_t value);
 void      rps_http_set_content_length(rps_http_request_t *r, size_t len);
+rps_int_t rps_http_header_filter(rps_http_request_t *r);
 rps_int_t rps_http_send_header(rps_http_request_t *r);
 rps_int_t rps_http_send_body(rps_http_request_t *r, rps_buf_t *body);
 rps_int_t rps_http_output_filter(rps_http_request_t *r, rps_chain_t *out);
