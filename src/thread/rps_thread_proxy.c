@@ -106,8 +106,8 @@ rps_thread_proxy_run(rps_http_request_t *r, rps_upstream_t *u)
             memcpy(u->response_buf->last, buf, (size_t)n);
             u->response_buf->last += n;
 
-            if (u->process_header) {
-                rc = u->process_header(r, u);
+            if (u->process_response) {
+                rc = u->process_response(r, u);
                 if (rc == RPS_AGAIN) continue;  /* 头不完整 */
                 if (rc != RPS_OK) { close(fd); return RPS_ERROR; }
                 break;
@@ -136,8 +136,8 @@ rps_thread_proxy_run(rps_http_request_t *r, rps_upstream_t *u)
         u->response_buf->last += n;
 
         /* 通过 HTTP 过滤链转发给客户端 */
-        if (u->forward_body) {
-            rc = u->forward_body(r, u);
+        if (u->process_response) {
+            rc = u->process_response(r, u);
             if (rc == RPS_AGAIN) {
                 /* write_filter 可能返回 AGAIN（客户端写阻塞）
                    在线程模式中改用 poll 阻塞等 */
@@ -228,8 +228,8 @@ rps_thread_ws_start(rps_http_request_t *r, rps_upstream_t *u)
             if (n <= 0) { close(fd); return RPS_ERROR; }
             memcpy(u->response_buf->last, buf, (size_t)n);
             u->response_buf->last += n;
-            if (u->process_header) {
-                rc = u->process_header(r, u);
+            if (u->process_response) {
+                rc = u->process_response(r, u);
                 if (rc == RPS_AGAIN) continue;
                 if (rc != RPS_OK) { close(fd); return RPS_ERROR; }
                 break;
