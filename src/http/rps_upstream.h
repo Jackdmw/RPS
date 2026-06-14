@@ -138,8 +138,19 @@ struct rps_upstream_s {
     /* ── 协议回调（由协议模块在 rps_upstream_init 前设置）── */
     rps_upstream_proto_t        *proto;
     rps_int_t (*create_request)(rps_http_request_t *r, rps_upstream_t *u);
-    rps_int_t (*process_header)(rps_http_request_t *r, rps_upstream_t *u);
-    rps_int_t (*forward_body)(rps_http_request_t *r, rps_upstream_t *u);
+
+    /*
+     * 统一响应处理：READ_HEADER 状态时调用。
+     * 负责解析后端响应头、构造并发送客户端响应头。
+     * 返回: RPS_OK(头已解析并发送), RPS_AGAIN(数据不足或写阻塞), RPS_ERROR
+     */
+    rps_int_t (*process_response)(rps_http_request_t *r, rps_upstream_t *u);
+
+    /*
+     * write_continue：客户端写就绪后调用，续写 + 恢复后端读。
+     * 纯 I/O 操作，不参与业务逻辑。
+     */
+    void (*write_continue)(rps_event_t *ev);
 
     /* ── 协议模块私有上下文（proxy: ws_ctx / fastcgi: fcgi_ctx 等）── */
     void                        *module_ctx;
@@ -149,7 +160,12 @@ struct rps_upstream_s {
     size_t                       body_received;     /* 已收到 body 字节数 */
 
     /* ── 标记 ── */
+#define RPS_UPSTREAM_READ_HEADER  0   /* 正在读/解析后端响应头 */
+#define RPS_UPSTREAM_READ_BODY    1   /* 正在读后端响应体 */
+
+    unsigned                    read_state:1;       /* 当前读状态: HEADER / BODY */
     unsigned                    header_complete:1; /* 后端响应头是否已解析完毕 */
+    unsigned                    headers_sent:1;     /* 响应头是否已发给客户端 */
     unsigned                    keepalive:1;        /* 后端响应同意 keep-alive（依据版本 + Connection 头） */
 };
 

@@ -523,6 +523,7 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
         }
         u->peer_addr.host = peer->host;
         u->peer_addr.port = peer->port;
+        rps_log_error(RPS_LOG_INFO, r->cycle -> log, 0, "reset upstream link addr for host is matched with upstream block");
     }
 
     /* 协议回调：构造发往后端的请求 */
@@ -602,11 +603,10 @@ rps_upstream_send_handler(rps_event_t *ev)
             rps_upstream_finalize(r, RPS_ERROR);
             return;
         }
-
+        rps_log_error(RPS_LOG_DEBUG, ev -> log, 0, "connect to upstream successfully");
         /* connect 成功，切换到发送超时 */
         rps_event_add_timer(ev, u->send_timeout);
     }
-
     /* 发送请求 */
     {
         ssize_t n = rps_unix_send(u->peer,
@@ -640,11 +640,10 @@ rps_upstream_send_handler(rps_event_t *ev)
 }
 
 /*
- * 读事件回调 — 收后端响应头 → 收响应体 → 转发客户端。
+ * 读事件回调 — 状态机驱动: READ_HEADER → READ_BODY。
  *
- * 头未完整时调用 proto->process_header 逐次解析。
- * 头完整后剩余数据直接当 body 转发给客户端（non-buffering）。
- * 后端关闭 (n==0) → finalize(r, OK)。
+ * READ_HEADER: process_response 解析头、发送头
+ * READ_BODY:   收 body → write_filter 推送 → CL 完成判定
  */
 static void
 rps_upstream_read_handler(rps_event_t *ev)
@@ -668,7 +667,6 @@ rps_upstream_read_handler(rps_event_t *ev)
 
     n = rps_unix_recv(u->peer, u->response_buf->last,
                       (size_t)(u->response_buf->end - u->response_buf->last));
-
     if (n < 0) {
         if (errno == EAGAIN || errno == EINTR) return;
         rps_upstream_finalize(r, RPS_ERROR);
@@ -676,51 +674,60 @@ rps_upstream_read_handler(rps_event_t *ev)
     }
 
     if (n == 0) {
-        /* 后端关闭连接：标记不可缓存，防止 free_peer 将死连接放入 keepalive 池 */
         if (u->keepalive) u->keepalive = 0;
+        rps_log_error(RPS_LOG_INFO, ev -> log, 0, "upstream close the connection");
         rps_upstream_finalize(r, RPS_OK);
         return;
     }
-
     u->response_buf->last += n;
 
-    /* ── 解析并发送响应头 ── */
-    if (!u->header_complete && u->process_header) {
-        rps_int_t rc = u->process_header(r, u);
+    /* ── READ_HEADER：解析后端响应头，发送给客户端 ── */
+    if (u->read_state == RPS_UPSTREAM_READ_HEADER) {
+        rps_int_t rc = u->process_response(r, u);
         if (rc == RPS_AGAIN) return;
         if (rc != RPS_OK) {
             rps_upstream_finalize(r, RPS_ERROR);
             return;
         }
-        u->header_complete = 1;
-        /* 记录响应头解析后缓冲区中已有的 body 字节数 */
-        u->body_received = (size_t)(u->response_buf->last - u->response_buf->pos);
-    } else if (u->header_complete) {
+        u->read_state = RPS_UPSTREAM_READ_BODY;
+        /*
+         * process_response 已设置 body_received 和 buf->pos（指向 body 起始）。
+         * 不跳出去等下次事件，直接进入 READ_BODY 把 buffer 里已有的 body 发出去。
+         */
+    } else {
         /* 后续读：累加新收到的 body 字节数 */
         u->body_received += (size_t)n;
     }
 
-    /* ── 转发响应体到客户端（由协议模块通过回调实现）── */
-    if (u->forward_body) {
-        rps_int_t rc = u->forward_body(r, u);
-        if (rc == RPS_AGAIN) {
-            /* 客户端写阻塞，forward_body 已注册 write 续传回调 */
-            return;
-        }
-        if (rc != RPS_OK) {
-            rps_upstream_finalize(r, RPS_ERROR);
-            return;
-        }
-    }
-
-    /*
-     * Content-Length 完成判定：body 全部收完 + 全部转发完 → finalize。
-     * 不依赖后端 EOF，keep-alive 后端可以立即进入下一请求。
-     */
-    if (u->header_complete && u->content_length_n > 0
-        && u->body_received >= u->content_length_n)
+    /* ── READ_BODY：推送 buffer 中所有 body 数据到客户端，判定完成 ── */
     {
-        rps_upstream_finalize(r, RPS_OK);
+        rps_int_t rc;
+
+        rc = rps_http_write_filter(r);
+        if (rc == RPS_AGAIN) {
+            if (u->peer && u->peer->read && u->peer->read->active)
+                r->cycle->event_engine->del_event(u->peer->read, RPS_READ_EVENT);
+            r->connection->write->handler = u->write_continue;
+            return;
+        }
+        if (rc != RPS_OK) { rps_upstream_finalize(r, RPS_ERROR); return; }
+
+        /* 发完复位 buf */
+        if (u->response_buf->pos == u->response_buf->last) {
+            u->response_buf->pos  = u->response_buf->start;
+            u->response_buf->last = u->response_buf->start;
+        }
+
+        /* CL 已知且收完 → 删后端读，结束 */
+        if (u->content_length_n > 0
+            && u->body_received >= u->content_length_n)
+        {
+            if (u->peer && u->peer->read && u->peer->read->active)
+                r->cycle->event_engine->del_event(u->peer->read, RPS_READ_EVENT);
+            else
+                rps_event_del_timer(u->peer->read);
+            rps_upstream_finalize(r, RPS_OK);
+        }
     }
 }
 
