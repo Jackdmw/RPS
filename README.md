@@ -137,7 +137,6 @@ src/
 
 ## TODO
 
-- [ ] 一连接一线程模式（当前为纯事件驱动）
-- [ ] WebSocket 代理（upstream 协议回调已预留接口）
+
 - [ ] HTTP 响应体 Content-Length 精确跟踪
 - [ ] 动态 peer 管理 (DNS 解析刷新)
