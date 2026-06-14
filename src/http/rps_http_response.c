@@ -4,7 +4,7 @@
 #include "core/rps_palloc.h"
 #include <sys/socket.h>
 
-static rps_int_t rps_http_header_filter(rps_http_request_t *r);
+rps_int_t rps_http_header_filter(rps_http_request_t *r);
 rps_int_t rps_http_write_filter(rps_http_request_t *r);
 static void rps_http_write_filter_continue(rps_event_t *ev);
 
@@ -43,8 +43,7 @@ rps_int_t rps_http_add_response_header(rps_http_request_t *r, rps_str_t key, rps
 /*
  * header_filter:  自动补齐头部 → 序列化 → 插入 out_chain 头部
  */
-static rps_int_t
-rps_http_header_filter(rps_http_request_t *r)
+rps_int_t rps_http_header_filter(rps_http_request_t *r)
 {
     rps_buf_t              *b;
     rps_chain_t            *hchain;
@@ -209,7 +208,7 @@ eagain:
     /* 注册写事件，等待 socket 可写时继续发送 */
     if (!c->write->active) {
         c->write->handler = rps_http_write_filter_continue;
-        c->write->data    = r;
+        c->write->data    = c;
 
         if (c->cycle->event_engine->add_event(c->write,
                                               RPS_WRITE_EVENT) != RPS_OK) {
@@ -231,12 +230,10 @@ rps_http_write_filter_continue(rps_event_t *ev)
     rps_cycle_t        *cycle;
     rps_int_t           rc;
 
-    r = ev->data;
-    if (r == NULL) {
-        return;
-    }
-
-    c     = r->connection;
+    c = ev->data;
+    if (c == NULL) return;
+    r = c->data;
+    if (r == NULL) return;
     cycle = c->cycle;
 
     /* 写超时 */
