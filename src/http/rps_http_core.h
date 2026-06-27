@@ -33,6 +33,8 @@ struct rps_http_headers_in_s{
     rps_http_header_kv_t               content_length;
     rps_http_header_kv_t               connection;           /* keep-alive / close / upgrade */
     rps_http_header_kv_t               upgrade;              /* websocket */
+    rps_http_header_kv_t               sec_websocket_key;    /* Sec-WebSocket-Key */
+    rps_http_header_kv_t               sec_websocket_version;/* Sec-WebSocket-Version */
     rps_uint_t                         content_length_n;     /* Content-Length 解析后的数字 */
 
     /* 全部 header 链表，元素类型 rps_http_header_kv_t */

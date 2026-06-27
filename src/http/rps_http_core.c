@@ -40,7 +40,9 @@ rps_http_create_request(rps_connection_t *c)
     request->headers_in.content_length.key = (rps_str_t)rps_string("content-length");
     request->headers_in.user_agent.key     = (rps_str_t)rps_string("user-agent");
     request->headers_in.content_type.key   = (rps_str_t)rps_string("content-type");
-    request->headers_in.upgrade.key        = (rps_str_t)rps_string("upgrade");
+    request->headers_in.upgrade.key               = (rps_str_t)rps_string("upgrade");
+    request->headers_in.sec_websocket_key.key      = (rps_str_t)rps_string("sec-websocket-key");
+    request->headers_in.sec_websocket_version.key  = (rps_str_t)rps_string("sec-websocket-version");
 
     request->headers_out.content_type.key = (rps_str_t)rps_string("content-type");
     request->headers_out.server.key       = (rps_str_t)rps_string("server");
