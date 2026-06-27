@@ -110,7 +110,7 @@ rps_epoll_add_event(rps_event_t *ev, rps_uint_t event)
     struct epoll_event      ee;
     rps_connection_t       *c;
 
-    c = ev->data;
+    c = ev->connection;
 
     memset(&ee, 0, sizeof(ee));
     ee.events = 0;
@@ -148,7 +148,7 @@ rps_epoll_del_event(rps_event_t *ev, rps_uint_t event)
 {
     rps_connection_t       *c;
 
-    c = ev->data;
+    c = ev->connection;
 
     if (!ev->active) {
         return RPS_OK;
@@ -186,7 +186,7 @@ rps_epoll_process_events(rps_cycle_t *cycle, rps_msec_t timer)
 
     for (i = 0; i < (rps_uint_t)events; i++) {
         ev = (rps_event_t *)event_list[i].data.ptr;
-        c  = ev->data;
+        c  = ev->connection;
 
         /* 连接错误 / 对端关闭 */
         if (event_list[i].events & (EPOLLERR | EPOLLHUP)) {

@@ -121,8 +121,8 @@ rps_int_t  rps_event_core_init_process(rps_cycle_t *cycle){
         cycle -> connections[i].data = cycle -> connections + (i+1);
         cycle -> connections[i].read = cycle -> reads + i;
         cycle -> connections[i].write = cycle -> writes + i;
-        cycle -> connections[i].read->data = &cycle -> connections[i];
-        cycle -> connections[i].write->data = &cycle -> connections[i];
+        cycle -> connections[i].read->data = &cycle; cycle -> connections[i].read->connection = &cycle -> connections[i] -> connections[i];
+        cycle -> connections[i].write->data = &cycle; cycle -> connections[i].write->connection = &cycle -> connections[i] -> connections[i];
 
         cycle -> connections[i].cycle = cycle;
     }

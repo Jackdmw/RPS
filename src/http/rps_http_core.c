@@ -181,7 +181,7 @@ rps_http_complete_request(rps_connection_t *c)
     }
     c->data          = r;
     c->read->handler = rps_http_wait_request_handler;
-    c->read->data    = c;
+    c->read->data    = r; c->read->connection = c;
 
     if (c->cycle->event_engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
         rps_free_connection(c);

@@ -38,9 +38,10 @@ typedef struct rps_event_module_s {
 } rps_event_module_t;
 
 struct rps_event_s{
-    
-    void                       *data;           /*指向关联的 rps_connection_t*/
-    rps_event_handler_pt        handler;        /* 时间就绪时的回调函数*/
+
+    void                       *data;           /* 指向请求对象或模块私有数据 */
+    rps_connection_t           *connection;     /* 所属的连接对象（永远指向 connection） */
+    rps_event_handler_pt        handler;        /* 事件就绪时的回调函数*/
 
     unsigned                    write:1;        /*1：写事件，0：读事件*/
     unsigned                    active:1;       /*是否注册到epoll/io_uring中*/

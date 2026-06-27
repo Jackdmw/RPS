@@ -362,11 +362,13 @@ rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
         rps_memzero(c->read,  sizeof(rps_event_t));
         rps_memzero(c->write, sizeof(rps_event_t));
 
-        c->read->data  = c;
+        c->read->data  = c; c->read->connection = c;
+        c->read->connection = c;
         c->read->log   = log;
         c->read->write = 0;
 
         c->write->data  = c;
+        c->write->connection = c;
         c->write->log   = log;
         c->write->write = 1;
 
@@ -391,11 +393,11 @@ rps_upstream_new_peer_conn(rps_cycle_t *cycle, rps_log_t *log,
         c->write = write;
         c->cycle = cycle;
 
-        read->data  = c;
+        read->data  = c; read->connection = c;
         read->log   = log;
         read->write = 0;
 
-        write->data  = c;
+        write->data  = c; write->connection = c;
         write->log   = log;
         write->write = 1;
 
@@ -553,7 +555,7 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
      */
     u->peer->write->handler = rps_upstream_send_handler;
     u->peer->read->handler  = rps_upstream_read_handler;
-    u->peer->data           = r;
+    u->peer->data           = r; u->peer->read->data = r; u->peer->write->data = r;
 
     if (r->cycle->event_engine->add_event(u->peer->write,
                                           RPS_WRITE_EVENT) != RPS_OK) {
@@ -576,12 +578,12 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
 static void
 rps_upstream_send_handler(rps_event_t *ev)
 {
-    rps_connection_t   *c = ev->data;
+    rps_connection_t   *c = ev->connection;
     rps_http_request_t *r;
     rps_upstream_t     *u;
 
     if (c == NULL) return;
-    r = c->data;
+    r = ev->data;
     if (r == NULL) return;
     u = r->upstream;
     if (u == NULL) return;
@@ -648,13 +650,13 @@ rps_upstream_send_handler(rps_event_t *ev)
 static void
 rps_upstream_read_handler(rps_event_t *ev)
 {
-    rps_connection_t   *c = ev->data;
+    rps_connection_t   *c = ev->connection;
     rps_http_request_t *r;
     rps_upstream_t     *u;
     ssize_t             n;
 
     if (c == NULL) return;
-    r = c->data;
+    r = ev->data;
     if (r == NULL) return;
     u = r->upstream;
     if (u == NULL) return;
@@ -810,7 +812,7 @@ rps_upstream_finalize(rps_http_request_t *r, rps_int_t rc)
 static void
 rps_upstream_cache_idle_handler(rps_event_t *ev)
 {
-    rps_connection_t       *peer = ev->data;
+    rps_connection_t       *peer = ev->connection;
     rps_upstream_conf_t    *ucf;
     rps_upstream_cached_peer_t *cached;
     rps_uint_t              i;

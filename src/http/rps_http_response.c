@@ -207,8 +207,9 @@ rps_http_write_filter(rps_http_request_t *r)
 eagain:
     /* 注册写事件，等待 socket 可写时继续发送 */
     if (!c->write->active) {
-        c->write->handler = rps_http_write_filter_continue;
-        c->write->data    = c;
+        c->write->handler   = rps_http_write_filter_continue;
+        c->write->connection = c;
+        c->write->data       = r;
 
         if (c->cycle->event_engine->add_event(c->write,
                                               RPS_WRITE_EVENT) != RPS_OK) {
@@ -230,10 +231,9 @@ rps_http_write_filter_continue(rps_event_t *ev)
     rps_cycle_t        *cycle;
     rps_int_t           rc;
 
-    c = ev->data;
-    if (c == NULL) return;
-    r = c->data;
-    if (r == NULL) return;
+    c = ev->connection;
+    r = ev->data;
+    if (c == NULL || r == NULL) return;
     cycle = c->cycle;
 
     /* 写超时 */

@@ -466,7 +466,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
         }
         c->fd         = listening[i].fd;
         c->read->handler = rps_event_accept;
-        c->read->data    = c;
+        c->read->data    = c; c->read->connection = c;
 
         if (engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
             rps_log_error(RPS_LOG_EMERG, cycle->log, 0,
@@ -502,7 +502,7 @@ rps_event_accept(rps_event_t *ev)
     struct sockaddr         sa;
     socklen_t               len;
 
-    c  = ev->data;
+    c  = ev->connection;
     ls = c->listenling;
 
     len = sizeof(sa);
@@ -590,8 +590,8 @@ rps_http_wait_request_handler(rps_event_t *ev)
     rps_http_core_main_conf_t  *cmcf;
     rps_http_conf_container_t  *container;
 
-    c = ev->data;
-    r = c->data;
+    c = ev->connection;
+    r = ev->data;
 
     /*
      * 请求正在阶段引擎中处理（c->data 已解耦），客户端又发来数据。

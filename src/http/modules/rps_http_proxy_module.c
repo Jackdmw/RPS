@@ -876,10 +876,9 @@ rps_http_proxy_write_continue(rps_event_t *ev)
     rps_connection_t   *c;
     rps_int_t           rc;
 
-    c = ev->data;
-    if (c == NULL) return;
-    r = c->data;
-    if (r == NULL || r->upstream == NULL) return;
+    c = ev->connection;
+    r = ev->data;
+    if (c == NULL || r == NULL || r->upstream == NULL) return;
     u = r->upstream;
 
     if (ev->timedout) {
@@ -1284,11 +1283,11 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
 
         /* 客户端读 → 转发到后端 */
         r->connection->read->handler = ws_client_read_handler;
-        r->connection->read->data    = r->connection;
+        r->connection->read->data    = r->connection r->connection->read->connection = r->connection;
 
         /* 后端读 → 转发到客户端 */
         u->peer->read->handler = ws_upstream_read_handler;
-        u->peer->read->data    = u->peer;
+        u->peer->read->data    = r; u->peer->read->connection = u->peer;
 
         /* 删除后端读事件的 HTTP 超时，WS 有自己的生命周期 */
         rps_event_del_timer(u->peer->read);
@@ -1307,7 +1306,7 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
 static void
 ws_client_read_handler(rps_event_t *ev)
 {
-    rps_connection_t   *c = ev->data;
+    rps_connection_t   *c = ev->connection;
     rps_http_request_t *r;
     rps_upstream_t     *u;
     rps_ws_ctx_t       *ctx;
@@ -1315,7 +1314,7 @@ ws_client_read_handler(rps_event_t *ev)
     ssize_t             n, sent;
 
     if (c == NULL) return;
-    r = c->data;
+    r = ev->data;
     if (r == NULL || r->upstream == NULL) {
         ws_close(r);
         return;
@@ -1354,7 +1353,7 @@ ws_client_read_handler(rps_event_t *ev)
                 c->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
 
             u->peer->write->handler = ws_client_write_handler;
-            u->peer->write->data    = u->peer;
+            u->peer->write->data    = r; u->peer->write->connection = u->peer;
             if (!u->peer->write->active)
                 c->cycle->event_engine->add_event(u->peer->write,
                                                    RPS_WRITE_EVENT);
@@ -1368,7 +1367,7 @@ ws_client_read_handler(rps_event_t *ev)
 static void
 ws_upstream_read_handler(rps_event_t *ev)
 {
-    rps_connection_t   *c = ev->data;
+    rps_connection_t   *c = ev->connection;
     rps_http_request_t *r;
     rps_upstream_t     *u;
     rps_ws_ctx_t       *ctx;
@@ -1376,7 +1375,7 @@ ws_upstream_read_handler(rps_event_t *ev)
     ssize_t             n, sent;
 
     if (c == NULL) return;
-    r = c->data;
+    r = ev->data;
     if (r == NULL || r->upstream == NULL) {
         ws_close(r);
         return;
@@ -1413,7 +1412,7 @@ ws_upstream_read_handler(rps_event_t *ev)
                 c->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
 
             r->connection->write->handler = ws_upstream_write_handler;
-            r->connection->write->data    = r->connection;
+            r->connection->write->data    = r->connection r->connection->write->connection = r->connection;
             if (!r->connection->write->active)
                 c->cycle->event_engine->add_event(r->connection->write,
                                                    RPS_WRITE_EVENT);
@@ -1427,14 +1426,14 @@ ws_upstream_read_handler(rps_event_t *ev)
 static void
 ws_client_write_handler(rps_event_t *ev)
 {
-    rps_connection_t   *c = ev->data;
+    rps_connection_t   *c = ev->connection;
     rps_http_request_t *r;
     rps_upstream_t     *u;
     rps_ws_ctx_t       *ctx;
     ssize_t             sent;
 
     if (c == NULL) return;
-    r = c->data;
+    r = ev->data;
     if (r == NULL || r->upstream == NULL) return;
     u   = r->upstream;
     ctx = u->module_ctx;
@@ -1444,7 +1443,7 @@ ws_client_write_handler(rps_event_t *ev)
         /* 缓冲已空，恢复客户端读 */
         c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
         r->connection->read->handler = ws_client_read_handler;
-        r->connection->read->data    = r->connection;
+        r->connection->read->data    = r->connection r->connection->read->connection = r->connection;
         if (!r->connection->read->active)
             c->cycle->event_engine->add_event(r->connection->read,
                                                RPS_READ_EVENT);
@@ -1465,7 +1464,7 @@ ws_client_write_handler(rps_event_t *ev)
         /* 缓冲已空，恢复客户端读 */
         c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
         r->connection->read->handler = ws_client_read_handler;
-        r->connection->read->data    = r->connection;
+        r->connection->read->data    = r->connection r->connection->read->connection = r->connection;
         if (!r->connection->read->active)
             c->cycle->event_engine->add_event(r->connection->read,
                                                RPS_READ_EVENT);
@@ -1478,14 +1477,14 @@ ws_client_write_handler(rps_event_t *ev)
 static void
 ws_upstream_write_handler(rps_event_t *ev)
 {
-    rps_connection_t   *c = ev->data;
+    rps_connection_t   *c = ev->connection;
     rps_http_request_t *r;
     rps_upstream_t     *u;
     rps_ws_ctx_t       *ctx;
     ssize_t             sent;
 
     if (c == NULL) return;
-    r = c->data;
+    r = ev->data;
     if (r == NULL || r->upstream == NULL) return;
     u   = r->upstream;
     ctx = u->module_ctx;
@@ -1494,7 +1493,7 @@ ws_upstream_write_handler(rps_event_t *ev)
     if (ctx->to_client->pos >= ctx->to_client->last) {
         c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
         u->peer->read->handler = ws_upstream_read_handler;
-        u->peer->read->data    = u->peer;
+        u->peer->read->data    = r; u->peer->read->connection = u->peer;
         if (!u->peer->read->active)
             c->cycle->event_engine->add_event(u->peer->read, RPS_READ_EVENT);
         return;
@@ -1513,7 +1512,7 @@ ws_upstream_write_handler(rps_event_t *ev)
     if (ctx->to_client->pos >= ctx->to_client->last) {
         c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
         u->peer->read->handler = ws_upstream_read_handler;
-        u->peer->read->data    = u->peer;
+        u->peer->read->data    = r; u->peer->read->connection = u->peer;
         if (!u->peer->read->active)
             c->cycle->event_engine->add_event(u->peer->read, RPS_READ_EVENT);
     }
