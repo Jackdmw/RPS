@@ -1283,7 +1283,8 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
 
         /* 客户端读 → 转发到后端 */
         r->connection->read->handler = ws_client_read_handler;
-        r->connection->read->data    = r->connection r->connection->read->connection = r->connection;
+        r->connection->read->data    = r; 
+        r->connection->read->connection = r->connection;
 
         /* 后端读 → 转发到客户端 */
         u->peer->read->handler = ws_upstream_read_handler;
@@ -1412,7 +1413,7 @@ ws_upstream_read_handler(rps_event_t *ev)
                 c->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
 
             r->connection->write->handler = ws_upstream_write_handler;
-            r->connection->write->data    = r->connection r->connection->write->connection = r->connection;
+            r->connection->write->data    = r; r->connection->write->connection = r->connection;
             if (!r->connection->write->active)
                 c->cycle->event_engine->add_event(r->connection->write,
                                                    RPS_WRITE_EVENT);
@@ -1443,7 +1444,8 @@ ws_client_write_handler(rps_event_t *ev)
         /* 缓冲已空，恢复客户端读 */
         c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
         r->connection->read->handler = ws_client_read_handler;
-        r->connection->read->data    = r->connection r->connection->read->connection = r->connection;
+        r->connection->read->data    = r; 
+        r->connection->read->connection = r->connection;
         if (!r->connection->read->active)
             c->cycle->event_engine->add_event(r->connection->read,
                                                RPS_READ_EVENT);
@@ -1464,7 +1466,8 @@ ws_client_write_handler(rps_event_t *ev)
         /* 缓冲已空，恢复客户端读 */
         c->cycle->event_engine->del_event(ev, RPS_WRITE_EVENT);
         r->connection->read->handler = ws_client_read_handler;
-        r->connection->read->data    = r->connection r->connection->read->connection = r->connection;
+        r->connection->read->data    = r; 
+        r->connection->read->connection = r->connection;
         if (!r->connection->read->active)
             c->cycle->event_engine->add_event(r->connection->read,
                                                RPS_READ_EVENT);
