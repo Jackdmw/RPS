@@ -1046,40 +1046,20 @@ ws_create_request(rps_http_request_t *r, rps_upstream_t *u)
                        r->headers_in.upgrade.value.len);
         *p++ = '\r'; *p++ = '\n';
     }
-    p = rps_cpymem(p, "Connection: Upgrade\r\n", 20);
+    p = rps_cpymem(p, "Connection: Upgrade\r\n", 21);
 
     /* ── Sec-WebSocket-Key / Version ── */
-    {
-        rps_http_header_kv_t *sh;
-        rps_list_part_t      *sp;
-        rps_uint_t            k;
-        unsigned              has_key = 0, has_ver = 0;
-
-        sp = &r->headers_in.headers.part;
-        while (sp != NULL) {
-            sh = (rps_http_header_kv_t *)sp->elts;
-            for (k = 0; k < sp->nelts; k++) {
-                if (!has_key
-                    && rps_strcmp_with_cstr(sh[k].key, "sec-websocket-key"))
-                {
-                    p = rps_cpymem(p, "Sec-WebSocket-Key: ", 19);
-                    p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
-                    *p++ = '\r'; *p++ = '\n';
-                    has_key = 1;
-                }
-                if (!has_ver
-                    && rps_strcmp_with_cstr(sh[k].key, "sec-websocket-version"))
-                {
-                    p = rps_cpymem(p, "Sec-WebSocket-Version: ", 23);
-                    p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
-                    *p++ = '\r'; *p++ = '\n';
-                    has_ver = 1;
-                }
-                if (has_key && has_ver) goto ws_sec_done;
-            }
-            sp = sp->next;
-        }
-        ws_sec_done:;
+    if (r->headers_in.sec_websocket_key.value.data != NULL) {
+        p = rps_cpymem(p, "Sec-WebSocket-Key: ", 19);
+        p = rps_cpymem(p, r->headers_in.sec_websocket_key.value.data,
+                       r->headers_in.sec_websocket_key.value.len);
+        *p++ = '\r'; *p++ = '\n';
+    }
+    if (r->headers_in.sec_websocket_version.value.data != NULL) {
+        p = rps_cpymem(p, "Sec-WebSocket-Version: ", 23);
+        p = rps_cpymem(p, r->headers_in.sec_websocket_version.value.data,
+                       r->headers_in.sec_websocket_version.value.len);
+        *p++ = '\r'; *p++ = '\n';
     }
 
     /* ── 透传 Sec-WebSocket-Protocol / Extensions (如果存在) ── */
@@ -1094,13 +1074,13 @@ ws_create_request(rps_http_request_t *r, rps_upstream_t *u)
             for (k = 0; k < sp->nelts; k++) {
                 if (rps_strcmp_with_cstr(sh[k].key, "sec-websocket-protocol"))
                 {
-                    p = rps_cpymem(p, "Sec-WebSocket-Protocol: ", 25);
+                    p = rps_cpymem(p, "Sec-WebSocket-Protocol: ", 24);
                     p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
                     *p++ = '\r'; *p++ = '\n';
                 }
                 if (rps_strcmp_with_cstr(sh[k].key, "sec-websocket-extensions"))
                 {
-                    p = rps_cpymem(p, "Sec-WebSocket-Extensions: ", 27);
+                    p = rps_cpymem(p, "Sec-WebSocket-Extensions: ", 26);
                     p = rps_cpymem(p, sh[k].value.data, sh[k].value.len);
                     *p++ = '\r'; *p++ = '\n';
                 }
@@ -1297,7 +1277,11 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
                       "WS: upgrade complete, bidirectional mode active");
     }
 
-    return RPS_OK;
+    /*
+     * 返回 RPS_AGAIN 阻止 read_handler 进入 READ_BODY 状态机。
+     * WS 的后续数据由 ws_upstream_read_handler / ws_client_read_handler 处理。
+     */
+    return RPS_AGAIN;
 }
 
 
@@ -1339,7 +1323,7 @@ ws_client_read_handler(rps_event_t *ev)
     }
 
     /* 写后端 */
-    sent = send(u->peer->fd, buf, (size_t)n, 0);
+    sent = send(u->peer->fd, buf, (size_t)n, MSG_NOSIGNAL);
     if (sent < n) {
         if (sent < 0 && (errno == EAGAIN || errno == EINTR)) sent = 0;
 
@@ -1400,7 +1384,7 @@ ws_upstream_read_handler(rps_event_t *ev)
     }
 
     /* 写客户端 */
-    sent = send(r->connection->fd, buf, (size_t)n, 0);
+    sent = send(r->connection->fd, buf, (size_t)n, MSG_NOSIGNAL);
     if (sent < n) {
         if (sent < 0 && (errno == EAGAIN || errno == EINTR)) sent = 0;
 
