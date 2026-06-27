@@ -551,6 +551,8 @@ rps_event_accept(rps_event_t *ev)
         return;
     }
     new_c->data = r;
+    new_c->read->data = r;
+    new_c->read->connection = new_c;
     rps_log_error(RPS_LOG_INFO, rps_cycle -> log, 0, "accept new connection");
 
     if (rps_cycle->if_pthread) {
