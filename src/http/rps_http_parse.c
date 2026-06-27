@@ -191,6 +191,12 @@ rps_int_t rps_http_parse_headers(rps_http_request_t *r){
             else if (rps_strcmp_with_cstr(key, "upgrade") == RPS_STRING_EQUAL){
                 r -> headers_in.upgrade.value =value;
             }
+            else if (rps_strcmp_with_cstr(key, "sec-websocket-key") == RPS_STRING_EQUAL){
+                r -> headers_in.sec_websocket_key.value = value;
+            }
+            else if (rps_strcmp_with_cstr(key, "sec-websocket-version") == RPS_STRING_EQUAL){
+                r -> headers_in.sec_websocket_version.value = value;
+            }
             else {
                 new_header = rps_list_push(&r -> headers_in.headers);
                 new_header->key = key;
