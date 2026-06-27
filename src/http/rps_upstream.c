@@ -499,7 +499,7 @@ rps_upstream_create(rps_http_request_t *r)
     u->connect_timeout  = 60000;
     u->send_timeout     = 60000;
     u->read_timeout     = 60000;
-
+    u -> content_length_n = 0;
     u->response_buf = rps_buf_create(r->pool, 16384);
     if (u->response_buf == NULL) return NULL;
 
@@ -555,7 +555,9 @@ rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
      */
     u->peer->write->handler = rps_upstream_send_handler;
     u->peer->read->handler  = rps_upstream_read_handler;
-    u->peer->data           = r; u->peer->read->data = r; u->peer->write->data = r;
+    u->peer->data           = r; 
+    u->peer->read->data = r; 
+    u->peer->write->data = r;
 
     if (r->cycle->event_engine->add_event(u->peer->write,
                                           RPS_WRITE_EVENT) != RPS_OK) {
@@ -701,8 +703,8 @@ rps_upstream_read_handler(rps_event_t *ev)
         u->body_received += (size_t)n;
     }
 
-    /* ── READ_BODY：推送 buffer 中所有 body 数据到客户端，判定完成 ── */
-    {
+    /* ── READ_BODY：推送 body 数据，判定完成 ── */
+    if (u->content_length_n > 0) {
         rps_int_t rc;
 
         rc = rps_http_write_filter(r);
@@ -721,15 +723,20 @@ rps_upstream_read_handler(rps_event_t *ev)
         }
 
         /* CL 已知且收完 → 删后端读，结束 */
-        if (u->content_length_n > 0
-            && u->body_received >= u->content_length_n)
-        {
+        if (u->body_received >= u->content_length_n) {
             if (u->peer && u->peer->read && u->peer->read->active)
                 r->cycle->event_engine->del_event(u->peer->read, RPS_READ_EVENT);
             else
                 rps_event_del_timer(u->peer->read);
             rps_upstream_finalize(r, RPS_OK);
         }
+    } else {
+        /* 无 CL：header 已发，无 body，直接完成 */
+        if (u->peer && u->peer->read && u->peer->read->active)
+            r->cycle->event_engine->del_event(u->peer->read, RPS_READ_EVENT);
+        else
+            rps_event_del_timer(u->peer->read);
+        rps_upstream_finalize(r, RPS_OK);
     }
 }
 
