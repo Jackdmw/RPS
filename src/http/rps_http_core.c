@@ -88,7 +88,7 @@ rps_http_create_request(rps_connection_t *c)
     request->log = c->listenling ? c->listenling->log : NULL;
 
     /* 每次创建 request 重置客户端读超时，keepalive 连接复用时不继承旧计时 */
-    if (c->read) {
+    if (c->read && c -> cycle -> if_pthread == 0) {
         rps_event_add_timer(c->read, 60000);
     }
 
