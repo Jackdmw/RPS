@@ -361,7 +361,7 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
             rps_log_error(RPS_LOG_INFO , cycle -> log, 0, "worker process has been created,[WORKER PID]: %d", getpid());
             close(pid_f.fd);
             rps_worker_process_cycle(cycle);
-            break;
+            exit(0);
         }
         pids[i] = pid;
      }
