@@ -32,7 +32,7 @@ struct rps_log_s{
 };
 
 void rps_log_error(rps_uint_t level, rps_log_t *log, rps_err_t err, const char *fmt, ...);
-rps_log_t *rps_log_init(rps_str_t *prefix);
+rps_log_t *rps_log_init(u_char *file_path, rps_uint_t level);
 
 
 

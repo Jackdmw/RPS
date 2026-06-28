@@ -15,15 +15,28 @@ rps_log_strerror(rps_err_t err, u_char *p, size_t n)
 
 static rps_open_file_t  rps_log_stderr_file;
 
-rps_log_t *rps_log_init(rps_str_t *prefix) {
+rps_log_t *rps_log_init(u_char *file_path, rps_uint_t level) {
     static rps_log_t  rps_log;
-    
-    // 指向系统标准错误
-    rps_log_stderr_file.fd = STDERR_FILENO;
-    
-    rps_log.file = &rps_log_stderr_file;
-    rps_log.log_level = RPS_LOG_DEBUG; // 初始化阶段默认全开
-    
+    int                fd;
+
+    if (file_path == NULL) {
+        /* 未指定文件 → stderr */
+        rps_log_stderr_file.fd = STDERR_FILENO;
+        rps_log.file = &rps_log_stderr_file;
+    } else {
+        fd = open((const char *)file_path,
+                  O_WRONLY | O_APPEND | O_CREAT, 0644);
+        if (fd == -1) {
+            /* 打开失败回退到 stderr */
+            rps_log_stderr_file.fd = STDERR_FILENO;
+            rps_log.file = &rps_log_stderr_file;
+        } else {
+            rps_log_stderr_file.fd = fd;
+            rps_log.file = &rps_log_stderr_file;
+        }
+    }
+
+    rps_log.log_level = level;
     return &rps_log;
 }
 
