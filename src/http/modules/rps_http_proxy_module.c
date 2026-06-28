@@ -1140,7 +1140,6 @@ static rps_int_t
 ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
 {
     u_char   *p, *end, *header_end;
-    rps_int_t wrc;
 
     p   = u->response_buf->pos;
     end = u->response_buf->last;
@@ -1161,79 +1160,25 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
 
     if (header_end == NULL) return RPS_AGAIN;
 
-    /* ── 检查 101 status line ── */
+    /* ── 校验 101 状态码 ── */
     {
         u_char *cr = p;
         while (cr < header_end && *cr != '\r') cr++;
 
-        rps_log_error(RPS_LOG_ALERT, r->log, 0,
-                      "WS: status line = \"%.*s\"", (int)(cr - p), p);
-
-        /* status line 必须包含 "101" */
-        if (cr - p < 12) {
-            rps_log_error(RPS_LOG_ERR, r->log, 0,
-                          "WS: backend response too short for 101");
-            return RPS_ERROR;
-        }
-        /* "HTTP/x.x 101 ..." — 在 status line 中找 " 101 " */
+        /* 跳过 "HTTP/x.x "，定位状态码 */
+        u_char *sp = p;
+        while (sp < cr && *sp != ' ') sp++;
+        if (sp < cr) sp++;
+        if (!(sp + 3 <= cr && sp[0] == '1' && sp[1] == '0' && sp[2] == '1'))
         {
-            u_char *sp = p;
-            while (sp < cr && *sp != ' ') sp++;
-            if (sp < cr) sp++;
-            if (sp + 3 <= cr
-                && sp[0] == '1' && sp[1] == '0' && sp[2] == '1')
-            {
-                /* 101 OK */
-            } else {
-                rps_log_error(RPS_LOG_ERR, r->log, 0,
-                              "WS: backend did not return 101 (sp[0..2]='%c%c%c')",
-                              sp[0], sp[1], sp[2]);
-                return RPS_ERROR;
-            }
-        }
-    }
-
-    /* ── 发送 101 响应给客户端 ── */
-    {
-        /* 把响应头填充到 r->headers_out */
-        u_char *line = p;
-        /* 跳过 status line 的 \r\n */
-        while (line < header_end && *line != '\r') line++;
-        line += 2;
-
-        while (line < header_end) {
-            u_char *cr = line;
-            while (cr < header_end && *cr != '\r') cr++;
-            if (cr >= header_end) break;
-
-            u_char *colon = line;
-            while (colon < cr && *colon != ':') colon++;
-            if (colon < cr) {
-                rps_str_t key, value;
-                key.data = line;
-                key.len  = (rps_uint_t)(colon - line);
-                colon++;
-                while (colon < cr && *colon == ' ') colon++;
-                value.data = colon;
-                value.len  = (rps_uint_t)(cr - colon);
-
-                /* 状态行放到 status */
-                if (rps_strcmp_with_cstr(key, "upgrade")
-                    || rps_strcmp_with_cstr(key, "connection")
-                    || rps_strcmp_with_cstr(key, "sec-websocket-accept"))
-                {
-                    /* 关键 WS 头：通过 header_filter 写出 */
-                    rps_http_add_response_header(r, key, value);
-                }
-            }
-            line = cr + 2;
+            rps_log_error(RPS_LOG_ERR, r->log, 0, "WS: backend did not return 101");
+            return RPS_ERROR;
         }
     }
 
     /*
-     * WS 101 响应直接透传后端原始数据，不走 header_filter。
-     * header_filter 会覆盖 Connection / Content-Type 等头，
-     * 导致客户端收到 Connection: keep-alive 而非 Connection: Upgrade。
+     * 101 响应直接透传后端原始数据，不过 header_filter。
+     * WS 握手响应必须原样转发（Upgrade / Connection / Sec-WebSocket-Accept）。
      */
     {
         u_char  *start = u->response_buf->pos;  /* 响应起始位置 */
