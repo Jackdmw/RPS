@@ -185,9 +185,12 @@ rps_http_complete_request(rps_connection_t *c)
     c->read->handler = rps_http_wait_request_handler;
     c->read->data    = r; c->read->connection = c;
 
-    if (c->cycle->event_engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
-        rps_free_connection(c);
-        return;
+    /* 线程模式下不注册 epoll 事件（线程自己做阻塞 I/O） */
+    if (!c->cycle->if_pthread) {
+        if (c->cycle->event_engine->add_event(c->read, RPS_READ_EVENT) != RPS_OK) {
+            rps_free_connection(c);
+            return;
+        }
     }
     /* 计时器已在 rps_http_create_request 中重置 */
 }
