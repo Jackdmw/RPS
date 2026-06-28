@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "rps_thread.h"
 #include "http/modules/rps_http_proxy_module.h"
 #include "http/rps_http_phases.h"
@@ -14,242 +15,258 @@
 
 #define POLL_TIMEOUT 60000   /* 默认 poll 超时 60s */
 
-static int poll_wait(int fd, short events, int timeout_ms);
-static int blocking_send_all(int fd, const u_char *buf, size_t len, int timeout_ms);
+/*
+ * 阻塞版 write_filter：遍历 out_chain，逐 buf 阻塞 send。
+ * 线程模式专用——不依赖 epoll 事件，send 阻塞时 poll-wait。
+ */
+static int
+rps_thread_write_chain(rps_http_request_t *r, int timeout_ms)
+{
+    rps_chain_t *cl;
 
-/* ════════════════════════════════════════════════════════════
- * 线程启动时注册给 proxy handler 的入口
- * ════════════════════════════════════════════════════════════ */
+    for (cl = r->out_chain; cl != NULL; cl = cl->next) {
+        if (cl->buf == NULL) continue;
+
+        while (cl->buf->pos < cl->buf->last) {
+            size_t size = (size_t)(cl->buf->last - cl->buf->pos);
+            ssize_t n = send(r->connection->fd, cl->buf->pos, size, MSG_NOSIGNAL);
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EINTR) {
+                    if (rps_thread_poll_wait(r->connection->fd, POLLOUT,
+                                             timeout_ms) <= 0)
+                        return RPS_ERROR;
+                    continue;
+                }
+                return RPS_ERROR;
+            }
+            cl->buf->pos += n;
+        }
+    }
+    return RPS_OK;
+}
+
+
 
 rps_int_t
 rps_thread_proxy_run(rps_http_request_t *r, rps_upstream_t *u)
 {
-    int             fd;
-    struct addrinfo hints, *res, *rp;
-    char            host_buf[256], port_buf[8];
-    size_t          host_len;
-    rps_int_t       rc;
-    ssize_t         n;
+    int       fd;
+    rps_int_t rc;
+    ssize_t   n;
+    u_char    buf[16384];
+    /* ── 1. prepare：选 peer + 构造请求 + 获取连接（复用 upstream 逻辑）── */
+    if (rps_upstream_prepare(r, u) != RPS_OK) return RPS_ERROR;
 
-    /* ── 1. 构造请求 ── */
-    if (u->create_request) {
-        if (u->create_request(r, u) != RPS_OK) return RPS_ERROR;
+    fd = u->peer->fd;
+    /* ── 2. poll-wait connect（线程 IO）── */
+    if (rps_thread_poll_wait(fd, POLLOUT, (int)u->connect_timeout) <= 0){ 
+        
+        rps_upstream_finalize(r, RPS_ERROR);
+        return RPS_ERROR; 
     }
-
-    /* ── 2. 阻塞 connect ── */
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return RPS_ERROR;
-
     {
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
-
-    host_len = u->peer_addr.host.len;
-    if (host_len >= sizeof(host_buf)) host_len = sizeof(host_buf) - 1;
-    memcpy(host_buf, u->peer_addr.host.data, host_len);
-    host_buf[host_len] = '\0';
-    snprintf(port_buf, sizeof(port_buf), "%u", (unsigned)u->peer_addr.port);
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if (getaddrinfo(host_buf, port_buf, &hints, &res) != 0) {
-        close(fd); return RPS_ERROR;
-    }
-
-    for (rp = res; rp != NULL; rp = rp->ai_next) {
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
-        if (errno == EINPROGRESS) {
-            /* 等连接完成 */
-            if (poll_wait(fd, POLLOUT, (int)u->connect_timeout) <= 0) continue;
-            {
-                int       sock_err = 0;
-                socklen_t len      = sizeof(sock_err);
-                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &sock_err, &len) == 0
-                    && sock_err == 0) break;
+        int       sock_err = 0;
+        socklen_t len      = sizeof(sock_err);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &sock_err, &len) < 0
+            || sock_err != 0){ 
+                
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR; 
             }
-        }
-        close(fd);
-        fd = -1;
     }
-    freeaddrinfo(res);
-    if (rp == NULL) return RPS_ERROR;
 
-    /* ── 3. 阻塞发请求 ── */
+    /* ── 3. 阻塞发请求（线程 IO）── */
     {
         size_t len = (size_t)(u->request_bufs->last - u->request_bufs->pos);
-        if (blocking_send_all(fd, u->request_bufs->pos, len,
-                              (int)u->send_timeout) != 0) {
-            close(fd); return RPS_ERROR;
+        if (rps_thread_blocking_send_all(fd, u->request_bufs->pos, len,(int)u->send_timeout) != 0){ 
+            
+            rps_upstream_finalize(r, RPS_ERROR);
+            return RPS_ERROR; 
         }
     }
 
-    /* ── 4. 阻塞收响应头 ── */
+    /* ── 4. 阻塞收响应头（复用 process_response 回调）── */
     {
-        u_char buf[16384];
-        size_t buf_used = 0;
-
         u->response_buf->pos  = u->response_buf->start;
         u->response_buf->last = u->response_buf->start;
+        u->read_state         = RPS_UPSTREAM_READ_HEADER;
 
         while (!u->header_complete) {
-            if (poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0) { close(fd); return RPS_ERROR; }
+            if (rps_thread_poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0){ 
+                
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR; 
+            }
             n = recv(fd, buf, sizeof(buf), 0);
-            if (n <= 0) { close(fd); return RPS_ERROR; }
+            if (n <= 0) { 
+                
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR; 
+            }
 
-            /* 追加到 response_buf */
-            if ((size_t)n > (size_t)(u->response_buf->end - u->response_buf->last)) {
-                close(fd); return RPS_ERROR;  /* 缓冲不够 */
+            if ((size_t)n > (size_t)(u->response_buf->end - u->response_buf->last)){ 
+                
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR; 
             }
             memcpy(u->response_buf->last, buf, (size_t)n);
             u->response_buf->last += n;
 
-            if (u->process_response) {
-                rc = u->process_response(r, u);
-                if (rc == RPS_AGAIN) continue;  /* 头不完整 */
-                if (rc != RPS_OK) { close(fd); return RPS_ERROR; }
-                break;
+            rc = rps_http_proxy_parse_response(r, u);
+            if (rc == RPS_AGAIN) continue;
+            if (rc != RPS_OK) { 
+                
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR; 
             }
+        }
+        /* 解析完成：发送 headers + 挂 body chain */
+        u->headers_sent = 1;
+        u->read_state   = RPS_UPSTREAM_READ_BODY;
+        if (rps_http_header_filter(r) != RPS_OK) {
+            
+            rps_upstream_finalize(r, RPS_ERROR);
+            return RPS_ERROR;
+        }
+        {
+            rps_chain_t *cl = rps_palloc(r->pool, sizeof(rps_chain_t));
+            rps_chain_t *last;
+            if (cl == NULL) {
+                
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR;
+            }
+            cl->buf  = u->response_buf;
+            cl->next = NULL;
+            if (r->out_chain == NULL) r->out_chain = cl;
+            else {
+                for (last = r->out_chain; last->next; last = last->next);
+                last->next = cl;
+            }
+        }
+        /* 拼完 chain 立刻发送一次（header + 已有 body） */
+        if (rps_thread_write_chain(r, POLL_TIMEOUT) != RPS_OK){ 
+            
+            rps_upstream_finalize(r, RPS_ERROR);
+            return RPS_ERROR; 
+        }
+
+        /* 无 body 的响应（204/304）：已发完，直接完成 */
+        if (u->content_length_n == 0) {
+            rps_upstream_finalize(r, RPS_OK);
+            return RPS_HTTP_DONE;
         }
     }
 
     /* ── 5. 收 body + 转发客户端 ── */
-    while (u->content_length_n == 0
-           || u->body_received < u->content_length_n)
     {
-        u_char buf[16384];
-
-        if (poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0) { close(fd); return RPS_ERROR; }
-        n = recv(fd, buf, sizeof(buf), 0);
-        if (n == 0) break;  /* EOF */
-        if (n < 0) { close(fd); return RPS_ERROR; }
-
-        u->body_received += (size_t)n;
-
-        /* 追加到 response_buf */
-        if ((size_t)(u->response_buf->end - u->response_buf->last) < (size_t)n) {
-            close(fd); return RPS_ERROR;
-        }
-        memcpy(u->response_buf->last, buf, (size_t)n);
-        u->response_buf->last += n;
-
-        /* 通过 HTTP 过滤链转发给客户端 */
-        if (u->process_response) {
-            rc = u->process_response(r, u);
-            if (rc == RPS_AGAIN) {
-                /* write_filter 可能返回 AGAIN（客户端写阻塞）
-                   在线程模式中改用 poll 阻塞等 */
-                rc = rps_http_write_filter(r);
-                /* 此时应该全部写完 */
+        while (u->body_received < u->content_length_n) {
+            if (rps_thread_poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0){
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR;
             }
-            if (rc != RPS_OK) { close(fd); return RPS_ERROR; }
+            n = recv(fd, buf, sizeof(buf), 0);
+            if (n == 0) break;
+            if (n < 0) {
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR;
+            }
+
+            u->body_received += (size_t)n;
+
+            if ((size_t)(u->response_buf->end - u->response_buf->last) < (size_t)n){
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR;
+            }
+            memcpy(u->response_buf->last, buf, (size_t)n);
+            u->response_buf->last += n;
+
+            if (rps_thread_write_chain(r, POLL_TIMEOUT) != RPS_OK) {
+                rps_upstream_finalize(r, RPS_ERROR);
+                return RPS_ERROR;
+            }
+            if (u->response_buf->pos == u->response_buf->last) {
+                u->response_buf->pos  = u->response_buf->start;
+                u->response_buf->last = u->response_buf->start;
+            }
         }
     }
 
-    close(fd);
+    rps_upstream_finalize(r, RPS_OK);
     return RPS_HTTP_DONE;
 }
 
-/* ════════════════════════════════════════════════════════════
- * WebSocket: 完整流程（connect → 握手 → poll 双向转发）
- * ════════════════════════════════════════════════════════════ */
 
 rps_int_t
 rps_thread_ws_start(rps_http_request_t *r, rps_upstream_t *u)
 {
-    rps_int_t rc;
+    int       fd;
+    ssize_t   n;
 
-    /* 复用 thread_proxy_run 做握手阶段的 connect + send + recv headers */
-    rc = rps_thread_proxy_run(r, u);
-    if (rc != RPS_HTTP_DONE) return RPS_ERROR;
+    /* ── 1. 构造升级请求（复用 upstream 回调）── */
+    if (u->create_request && u->create_request(r, u) != RPS_OK) return RPS_ERROR;
 
-    /*
-     * ws_process_header 已将 101 发给客户端、初始化 ws_ctx。
-     * 但后端 fd 在 thread_proxy_run 中已被 close(fd)——不能复用。
-     * 需要在这里保留 fd 然后进入转发循环。
-     *
-     * 简单方案：重新连接并握手，或修改 proxy_run 返回保持 fd。
-     * 当前采用更直接的方式：在 ws_start 中完成全部操作。
-     */
+    /* ── 2. 发起 connect（复用 upstream）── */
+    rps_upstream_connect(r, u);
+    if (u->peer == NULL) return RPS_ERROR;
+    fd = u->peer->fd;
 
-    /* 重新实现 WS 握手 + 转发，保持 fd 存活 */
+    /* ── 3. 等 connect 完成 ── */
+    if (rps_thread_poll_wait(fd, POLLOUT, (int)u->connect_timeout) <= 0)
+        { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
     {
-        int fd;
-        struct addrinfo hints, *res, *rp;
-        char    host_buf[256], port_buf[8];
-        size_t  host_len;
-        ssize_t n;
-
-        /* connect */
-        fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (fd < 0) return RPS_ERROR;
-        {
-            int flags = fcntl(fd, F_GETFL, 0);
-            if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-        }
-        host_len = u->peer_addr.host.len;
-        if (host_len >= sizeof(host_buf)) host_len = sizeof(host_buf) - 1;
-        memcpy(host_buf, u->peer_addr.host.data, host_len);
-        host_buf[host_len] = '\0';
-        snprintf(port_buf, sizeof(port_buf), "%u", (unsigned)u->peer_addr.port);
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
-        if (getaddrinfo(host_buf, port_buf, &hints, &res) != 0) { close(fd); return RPS_ERROR; }
-        for (rp = res; rp; rp = rp->ai_next) {
-            if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
-            if (errno == EINPROGRESS) {
-                if (poll_wait(fd, POLLOUT, (int)u->connect_timeout) <= 0) continue;
-                int e; socklen_t l = sizeof(e);
-                if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &l) == 0 && e == 0) break;
-            }
-            close(fd); fd = -1;
-        }
-        freeaddrinfo(res);
-        if (rp == NULL) return RPS_ERROR;
-
-        /* send upgrade request */
-        if (u->create_request) u->create_request(r, u);
-        {
-            size_t len = (size_t)(u->request_bufs->last - u->request_bufs->pos);
-            if (blocking_send_all(fd, u->request_bufs->pos, len, POLL_TIMEOUT) != 0) {
-                close(fd); return RPS_ERROR;
-            }
-        }
-
-        /* recv 101 */
-        u->response_buf->pos  = u->response_buf->start;
-        u->response_buf->last = u->response_buf->start;
-        while (!u->header_complete) {
-            u_char buf[16384];
-            if (poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0) { close(fd); return RPS_ERROR; }
-            n = recv(fd, buf, sizeof(buf), 0);
-            if (n <= 0) { close(fd); return RPS_ERROR; }
-            memcpy(u->response_buf->last, buf, (size_t)n);
-            u->response_buf->last += n;
-            if (u->process_response) {
-                rc = u->process_response(r, u);
-                if (rc == RPS_AGAIN) continue;
-                if (rc != RPS_OK) { close(fd); return RPS_ERROR; }
-                break;
-            }
-        }
-
-        /* 把 peer 设置为已连接的 fd */
-        {
-            rps_connection_t *peer;
-            peer = rps_pcalloc(r->pool, sizeof(rps_connection_t));
-            if (peer == NULL) { close(fd); return RPS_ERROR; }
-            peer->fd    = fd;
-            peer->cycle = r->cycle;
-            u->peer     = peer;
-        }
-
-        /* 进入 poll 双向转发 */
-        rps_thread_ws_forward(r, u);
+        int e; socklen_t l = sizeof(e);
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &l) < 0 || e != 0)
+            { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
     }
 
+    /* ── 4. 阻塞发升级请求 ── */
+    {
+        size_t len = (size_t)(u->request_bufs->last - u->request_bufs->pos);
+        if (rps_thread_blocking_send_all(fd, u->request_bufs->pos, len,
+                                         POLL_TIMEOUT) != 0)
+            { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+    }
+
+    /* ── 5. 收 101 + 校验 + 透传 ── */
+    {
+        u_char buf[16384], *header_end = NULL, *p;
+        size_t buf_len = 0;
+
+        while (header_end == NULL) {
+            if (rps_thread_poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0)
+                { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+            n = recv(fd, buf + buf_len, sizeof(buf) - buf_len, 0);
+            if (n <= 0)
+                { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+            buf_len += (size_t)n;
+
+            for (p = buf; p + 3 < buf + buf_len; p++) {
+                if (p[0] == '\r' && p[1] == '\n'
+                    && p[2] == '\r' && p[3] == '\n')
+                    { header_end = p; break; }
+            }
+        }
+
+        /* 校验 101 */
+        {
+            u_char *cr = buf;
+            while (cr < header_end && *cr != '\r') cr++;
+            u_char *sp = buf;
+            while (sp < cr && *sp != ' ') sp++;
+            if (sp < cr) sp++;
+            if (!(sp + 3 <= cr && sp[0] == '1' && sp[1] == '0' && sp[2] == '1'))
+                { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+        }
+
+        /* 透传 101 给客户端 */
+        if (rps_thread_blocking_send_all(r->connection->fd, buf,
+                               (size_t)(header_end + 4 - buf), POLL_TIMEOUT) != 0)
+            { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+    }
+
+    /* ── 6. poll 双向转发 ── */
+    rps_thread_ws_forward(r, u);
     return RPS_HTTP_DONE;
 }
 
@@ -287,7 +304,7 @@ rps_thread_ws_forward(rps_http_request_t *r, rps_upstream_t *u)
         if (pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
             n = recv(client_fd, buf, sizeof(buf), 0);
             if (n <= 0) break;
-            if (blocking_send_all(backend_fd, buf, (size_t)n, POLL_TIMEOUT) != 0)
+            if (rps_thread_blocking_send_all(backend_fd, buf, (size_t)n, POLL_TIMEOUT) != 0)
                 break;
         }
 
@@ -295,41 +312,13 @@ rps_thread_ws_forward(rps_http_request_t *r, rps_upstream_t *u)
         if (pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
             n = recv(backend_fd, buf, sizeof(buf), 0);
             if (n <= 0) break;
-            if (blocking_send_all(client_fd, buf, (size_t)n, POLL_TIMEOUT) != 0)
+            if (rps_thread_blocking_send_all(client_fd, buf, (size_t)n, POLL_TIMEOUT) != 0)
                 break;
         }
     }
 
     rps_log_error(RPS_LOG_INFO, r->log, 0, "[thread] WS forward ended");
-
-    /* 关闭两侧 */
-    close(backend_fd);
-    close(client_fd);
+    rps_upstream_finalize(r, RPS_OK);
 }
 
-/* ════════════════════════════════════════════════════════════
- * I/O 工具
- * ════════════════════════════════════════════════════════════ */
-
-static int
-poll_wait(int fd, short events, int timeout_ms)
-{
-    struct pollfd pfd;
-    pfd.fd      = fd;
-    pfd.events  = events;
-    pfd.revents = 0;
-    return poll(&pfd, 1, timeout_ms);
-}
-
-static int
-blocking_send_all(int fd, const u_char *buf, size_t len, int timeout_ms)
-{
-    size_t sent = 0;
-    while (sent < len) {
-        if (poll_wait(fd, POLLOUT, timeout_ms) <= 0) return -1;
-        ssize_t n = send(fd, buf + sent, len - sent, MSG_NOSIGNAL);
-        if (n <= 0) return -1;
-        sent += (size_t)n;
-    }
-    return 0;
-}
+/* I/O 工具：rps_thread_poll_wait / rps_thread_blocking_send_all 在 rps_thread.c */
