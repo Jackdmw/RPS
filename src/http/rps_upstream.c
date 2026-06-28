@@ -443,18 +443,10 @@ rps_upstream_close_peer_conn(rps_connection_t *c)
  */
 static void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
 {
-    int              fd;
+    int              fd = -1;
     struct addrinfo  hints, *res, *rp;
     char             host_buf[256], port_buf[8];
     size_t           host_len;
-
-    fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return;
-
-    {
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
 
     host_len = u->peer_addr.host.len;
     if (host_len >= sizeof(host_buf)) host_len = sizeof(host_buf) - 1;
@@ -466,18 +458,22 @@ static void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
     hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if (getaddrinfo(host_buf, port_buf, &hints, &res) != 0) {
-        close(fd);
-        return;
-    }
+    if (getaddrinfo(host_buf, port_buf, &hints, &res) != 0) return;
 
     for (rp = res; rp != NULL; rp = rp->ai_next) {
+        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (fd < 0) continue;
+        {
+            int flags = fcntl(fd, F_GETFL, 0);
+            if (flags != -1) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
         if (errno == EINPROGRESS) break;
+        close(fd);
     }
     freeaddrinfo(res);
 
-    if (rp == NULL) { close(fd); return; }
+    if (rp == NULL) return;
 
     u->peer = rps_upstream_new_peer_conn(r->cycle, r->cycle->log,
                                           u->upstream_conf);
