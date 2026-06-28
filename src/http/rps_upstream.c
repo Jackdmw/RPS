@@ -19,7 +19,7 @@
 /* 运行时 — 事件驱动状态机（handler 指针切换推进） */
 static void rps_upstream_send_handler(rps_event_t *ev);
 static void rps_upstream_read_handler(rps_event_t *ev);
-static void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u);
+void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u);
 static void rps_upstream_cache_idle_handler(rps_event_t *ev);
 
 /* 配置解析 */
@@ -441,7 +441,7 @@ rps_upstream_close_peer_conn(rps_connection_t *c)
  * 在缓存没命中后执行，这个时候peer host 和port 已经获取到了
  * 使用独立分配的后端连接。
  */
-static void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
+void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u)
 {
     int              fd = -1;
     struct addrinfo  hints, *res, *rp;
@@ -502,58 +502,49 @@ rps_upstream_create(rps_http_request_t *r)
     return u;
 }
 
-/**
- * 进行upstream 流程
- * 进入前需要挂载header解析钩子，request 构造钩子
- * 还需要初始化对端的host port，如果是属于upstream 块中定义的，可省略
+/*
+ * 准备 upstream：选 peer、构造请求、获取后端连接（纯逻辑，无 I/O）。
+ * 线程和 reactor 共用。
  */
-void
-rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
+rps_int_t
+rps_upstream_prepare(rps_http_request_t *r, rps_upstream_t *u)
 {
     /* 如果配置了 upstream 块，通过负载均衡选择 peer */
     if (u->upstream_conf != NULL) {
         rps_upstream_peer_t *peer;
 
         peer = u->upstream_conf->select_peer(u->upstream_conf);
-        if (peer == NULL) {
-            rps_upstream_finalize(r, RPS_ERROR);
-            return;
-        }
+        if (peer == NULL) return RPS_ERROR;
         u->peer_addr.host = peer->host;
         u->peer_addr.port = peer->port;
-        rps_log_error(RPS_LOG_INFO, r->cycle -> log, 0, "reset upstream link addr for host is matched with upstream block");
     }
 
     /* 协议回调：构造发往后端的请求 */
-    if (u->create_request) {
-        if (u->create_request(r, u) != RPS_OK) {
-            rps_log_error(RPS_LOG_ERR, r->log, 0, "upstream: create_request failed");
-            rps_upstream_finalize(r, RPS_ERROR);
-            return;
-        }
-    }
+    if (u->create_request && u->create_request(r, u) != RPS_OK)
+        return RPS_ERROR;
 
     /* 获取后端连接（优先 keepalive 缓存） */
     rps_upstream_get_peer(r, u);
-    if (u->peer == NULL) {
-        rps_log_error(RPS_LOG_ERR, r->log, 0, "upstream: get_peer returned NULL");
+    return (u->peer != NULL) ? RPS_OK : RPS_ERROR;
+}
+
+/**
+ * 进行upstream 流程（reactor 专用：事件注册在 prepare 之后）
+ */
+void
+rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u)
+{
+    if (rps_upstream_prepare(r, u) != RPS_OK) {
         rps_upstream_finalize(r, RPS_ERROR);
         return;
     }
 
-    /*
-     * 注册事件 — 隐式状态机：
-     *   send_handler 首次触发时检查 connect 结果，然后发送请求。
-     *   全部发送后 del write、add read，read_handler 接管后续。
-     *
-     * 保持 ev->data = 连接对象（rps_epoll_add_event 需要它获取 fd），
-     * 请求对象通过 c->data 传递（与客户端连接保持一致的模式）。
-     */
+    /* 注册事件 — reactor 专用 */
     u->peer->write->handler = rps_upstream_send_handler;
     u->peer->read->handler  = rps_upstream_read_handler;
-    u->peer->data           = r; 
-    u->peer->read->data = r; 
-    u->peer->write->data = r;
+    u->peer->data           = r;
+    u->peer->read->data     = r;
+    u->peer->write->data    = r;
 
     if (r->cycle->event_engine->add_event(u->peer->write,
                                           RPS_WRITE_EVENT) != RPS_OK) {
@@ -681,7 +672,7 @@ rps_upstream_read_handler(rps_event_t *ev)
     }
     u->response_buf->last += n;
 
-    /* ── READ_HEADER：解析后端响应头，发送给客户端 ── */
+    /* ── READ_HEADER ── */
     if (u->read_state == RPS_UPSTREAM_READ_HEADER) {
         rps_int_t rc = u->process_response(r, u);
         if (rc == RPS_AGAIN) return;
@@ -690,16 +681,11 @@ rps_upstream_read_handler(rps_event_t *ev)
             return;
         }
         u->read_state = RPS_UPSTREAM_READ_BODY;
-        /*
-         * process_response 已设置 body_received 和 buf->pos（指向 body 起始）。
-         * 不跳出去等下次事件，直接进入 READ_BODY 把 buffer 里已有的 body 发出去。
-         */
     } else {
-        /* 后续读：累加新收到的 body 字节数 */
         u->body_received += (size_t)n;
     }
 
-    /* ── READ_BODY：推送 body 数据，判定完成 ── */
+    /* ── READ_BODY ── */
     if (u->content_length_n > 0) {
         rps_int_t rc;
 
@@ -710,15 +696,16 @@ rps_upstream_read_handler(rps_event_t *ev)
             r->connection->write->handler = u->write_continue;
             return;
         }
-        if (rc != RPS_OK) { rps_upstream_finalize(r, RPS_ERROR); return; }
+        if (rc != RPS_OK) { 
+            rps_upstream_finalize(r, RPS_ERROR); 
+            return; 
+        }
 
-        /* 发完复位 buf */
         if (u->response_buf->pos == u->response_buf->last) {
             u->response_buf->pos  = u->response_buf->start;
             u->response_buf->last = u->response_buf->start;
         }
 
-        /* CL 已知且收完 → 删后端读，结束 */
         if (u->body_received >= u->content_length_n) {
             if (u->peer && u->peer->read && u->peer->read->active)
                 r->cycle->event_engine->del_event(u->peer->read, RPS_READ_EVENT);
@@ -727,7 +714,6 @@ rps_upstream_read_handler(rps_event_t *ev)
             rps_upstream_finalize(r, RPS_OK);
         }
     } else {
-        /* 无 CL：header 已发，无 body，直接完成 */
         if (u->peer && u->peer->read && u->peer->read->active)
             r->cycle->event_engine->del_event(u->peer->read, RPS_READ_EVENT);
         else

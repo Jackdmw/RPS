@@ -172,6 +172,9 @@ struct rps_upstream_s {
 /* 创建 upstream 上下文（从 r->pool 分配） */
 rps_upstream_t *rps_upstream_create(rps_http_request_t *r);
 
+/* 逻辑层：选 peer + 构造请求 + 获取连接（线程/reactor 共用） */
+rps_int_t rps_upstream_prepare(rps_http_request_t *r, rps_upstream_t *u);
+
 /*
  * 启动 upstream：选择 peer → 构造请求 → 发起连接 → 注册事件。
  * 失败时内部调用 rps_upstream_finalize。
@@ -185,6 +188,9 @@ void rps_upstream_init(rps_http_request_t *r, rps_upstream_t *u);
  */
 void rps_upstream_finalize(rps_http_request_t *r, rps_int_t rc);
 
+
+/* 发起非阻塞 connect（线程模式也复用此逻辑） */
+void rps_upstream_connect(rps_http_request_t *r, rps_upstream_t *u);
 
 /* 加权轮询选择 peer */
 rps_upstream_peer_t *rps_upstream_select_peer_wrr(rps_upstream_conf_t *ucf);
