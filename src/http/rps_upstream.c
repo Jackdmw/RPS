@@ -145,6 +145,7 @@ rps_upstream_block(rps_conf_t *cf, rps_command_t *cmd, void *conf)
     ucf->keepalive_timeout          = RPS_CONF_UNSET_MSEC;
     ucf->keepalive_requests         = RPS_CONF_UNSET_UINT;
     ucf->select_peer               = rps_upstream_select_peer_wrr;
+    pthread_mutex_init(&ucf->free_peers_mutex, NULL);
 
     cf->cmd_type = RPS_HTTP_UPS_CONF;
     cf->ctx      = ucf;
@@ -851,17 +852,22 @@ rps_upstream_get_peer(rps_http_request_t *r, rps_upstream_t *u)
 
     /* 如有 upstream 配置且缓存非空，LIFO 取栈顶 */
     if (ucf != NULL && ucf->free_peers.nelts > 0) {
+        if (r->cycle->if_pthread) pthread_mutex_lock(&ucf->free_peers_mutex);
+
         cached = ucf->free_peers.elts;
         cached += ucf->free_peers.nelts - 1;
 
         rps_connection_t *peer = cached->connection;
 
-        /* 检查 keepalive_requests 限制：超限则关闭缓存连接并走新建路径 */
+        /* 检查 keepalive_requests 限制 */
         peer->upstream_requests++;
         if (peer->upstream_requests > ucf->keepalive_requests) {
             rps_event_del_timer(peer->read);
             peer->read->timedout = 0;
+            if (peer->read->active)
+                r->cycle->event_engine->del_event(peer->read, RPS_READ_EVENT);
             ucf->free_peers.nelts--;
+            if (r->cycle->if_pthread) pthread_mutex_unlock(&ucf->free_peers_mutex);
             rps_upstream_close_peer_conn(peer);
             goto new_peer;
         }
@@ -874,6 +880,8 @@ rps_upstream_get_peer(rps_http_request_t *r, rps_upstream_t *u)
 
         /* 弹出缓存栈 */
         ucf->free_peers.nelts--;
+
+        if (r->cycle->if_pthread) pthread_mutex_unlock(&ucf->free_peers_mutex);
 
         u->peer = peer;
         return peer;
@@ -904,10 +912,13 @@ rps_upstream_free_peer(rps_upstream_t *u)
         || u->keepalive == 0
         || ucf->free_peers.nelts >= ucf->keepalive)
     {
-        /* 不缓存：直接释放 */
         rps_upstream_close_peer_conn(peer);
         return;
     }
+
+    /* 线程模式保护共享缓存 */
+    if (peer->cycle->if_pthread)
+        pthread_mutex_lock(&ucf->free_peers_mutex);
 
     /* 放入缓存栈顶 */
     cached = rps_array_push(&ucf->free_peers);
@@ -921,12 +932,14 @@ rps_upstream_free_peer(rps_upstream_t *u)
 
     /*
      * 注册读事件 + 空闲超时定时器。
-     * 读事件用于检测后端主动关闭（FIN），定时器用于空闲超时回收。
-     * peer->data 暂存 upstream_conf 指针以便回调查找。
+     * 空闲连接属于全局资源，由主线程 epoll 管理（线程/非线程模式一致）。
      */
     peer->data = ucf;
     peer->read->handler = rps_upstream_cache_idle_handler;
 
     peer->cycle->event_engine->add_event(peer->read, RPS_READ_EVENT);
     rps_event_add_timer(peer->read, ucf->keepalive_timeout);
+
+    if (peer->cycle->if_pthread)
+        pthread_mutex_unlock(&ucf->free_peers_mutex);
 }

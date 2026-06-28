@@ -92,7 +92,8 @@ struct rps_upstream_conf_s {
     rps_upstream_peer_t *(*select_peer)(rps_upstream_conf_t *ucf);
 
     /* ── keepalive 空闲连接缓存（LIFO 栈，运行时填充）── */
-    rps_array_t     free_peers;         /* rps_upstream_cached_peer_t[] */
+    rps_array_t         free_peers;         /* rps_upstream_cached_peer_t[] */
+    pthread_mutex_t     free_peers_mutex;   /* 线程模式下保护 free_peers */
 };
 
 /*
