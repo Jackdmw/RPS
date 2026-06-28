@@ -34,9 +34,6 @@ rps_thread_mutex_destroy(rps_cycle_t *cycle)
     pthread_mutex_destroy(&cycle->upstream_conn_mutex);
 }
 
-/* ════════════════════════════════════════════════════════════
- * 阻塞 I/O 工具
- * ════════════════════════════════════════════════════════════ */
 
 /* poll 等待 fd 可读/可写，单位毫秒。返回 1=就绪, 0=超时, -1=错误 */
 int
@@ -69,9 +66,6 @@ rps_thread_blocking_send_all(int fd, const u_char *buf, size_t len, int timeout_
     return 0;
 }
 
-/* ════════════════════════════════════════════════════════════
- * HTTP 请求阻塞读 + 解析
- * ════════════════════════════════════════════════════════════ */
 
 static int
 thread_read_request(rps_http_request_t *r)
