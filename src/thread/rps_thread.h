@@ -7,6 +7,10 @@
 #include "http/rps_http_core.h"
 #include "http/rps_upstream.h"
 
+/* ── 阻塞 I/O 工具（线程通用）── */
+int     rps_thread_poll_wait(int fd, short events, int timeout_ms);
+int     rps_thread_blocking_send_all(int fd, const u_char *buf, size_t len, int timeout_ms);
+
 /* 传递给线程的上下文 */
 typedef struct {
     rps_cycle_t        *cycle;
