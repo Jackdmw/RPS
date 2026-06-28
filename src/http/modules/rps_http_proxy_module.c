@@ -1230,19 +1230,32 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
         }
     }
 
+    /*
+     * WS 101 响应直接透传后端原始数据，不走 header_filter。
+     * header_filter 会覆盖 Connection / Content-Type 等头，
+     * 导致客户端收到 Connection: keep-alive 而非 Connection: Upgrade。
+     */
+    {
+        u_char  *start = u->response_buf->pos;  /* 响应起始位置 */
+        size_t   len   = (size_t)(header_end + 4 - start); /* 含 \r\n\r\n */
+
+        ssize_t sent = rps_unix_send(r->connection, start, len);
+        if (sent < 0) {
+            if (errno == EAGAIN || errno == EINTR) {
+                r->connection->write->handler = rps_http_proxy_write_continue;
+                return RPS_AGAIN;
+            }
+            return RPS_ERROR;
+        }
+        if ((size_t)sent < len) {
+            /* 部分发送：暂不支持，简化处理 */
+            r->connection->write->handler = rps_http_proxy_write_continue;
+            return RPS_AGAIN;
+        }
+    }
+
     /* 移动 buffer position 穿过头部 */
     u->response_buf->pos = header_end + 4;
-
-    /* 设置 101 状态 */
-    r->headers_out.status.value = (rps_str_t)rps_string("101 Switching Protocols");
-
-    /* 发送 101 响应头给客户端 */
-    wrc = rps_http_send_header(r);
-    if (wrc == RPS_AGAIN) {
-        r->connection->write->handler = rps_http_proxy_write_continue;
-        return RPS_AGAIN;
-    }
-    if (wrc != RPS_OK) return RPS_ERROR;
 
     /*
      * 101 发送完毕 → 初始化 WS 上下文并切换为双向转发模式。
@@ -1262,15 +1275,17 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
         u->module_ctx = ctx;
 
         /* 客户端读 → 转发到后端 */
-        r->connection->read->handler = ws_client_read_handler;
-        r->connection->read->data    = r; 
+        r->connection->read->handler    = ws_client_read_handler;
+        r->connection->read->data       = r;
         r->connection->read->connection = r->connection;
 
         /* 后端读 → 转发到客户端 */
-        u->peer->read->handler = ws_upstream_read_handler;
-        u->peer->read->data    = r; u->peer->read->connection = u->peer;
+        u->peer->read->handler    = ws_upstream_read_handler;
+        u->peer->read->data       = r;
+        u->peer->read->connection = u->peer;
 
-        /* 删除后端读事件的 HTTP 超时，WS 有自己的生命周期 */
+        /* 删除 HTTP 阶段的读写定时器，WS 有自己的生命周期 */
+        rps_event_del_timer(r->connection->read);
         rps_event_del_timer(u->peer->read);
 
         rps_log_error(RPS_LOG_INFO, r->log, 0,
@@ -1298,6 +1313,7 @@ ws_client_read_handler(rps_event_t *ev)
     u_char              buf[WS_BUF_SIZE];
     ssize_t             n, sent;
 
+    if (ev->timedout) return;
     if (c == NULL) return;
     r = ev->data;
     if (r == NULL || r->upstream == NULL) {
@@ -1309,6 +1325,9 @@ ws_client_read_handler(rps_event_t *ev)
     if (ctx == NULL) return;
 
     n = recv(c->fd, buf, sizeof(buf), 0);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EINTR) return;
+    }
     if (n <= 0) {
         /* 客户端关闭或出错 */
         ctx->client_closed = 1;
@@ -1356,6 +1375,8 @@ ws_upstream_read_handler(rps_event_t *ev)
     rps_http_request_t *r;
     rps_upstream_t     *u;
     rps_ws_ctx_t       *ctx;
+
+    if (ev->timedout) return;
     u_char              buf[WS_BUF_SIZE];
     ssize_t             n, sent;
 
@@ -1370,6 +1391,9 @@ ws_upstream_read_handler(rps_event_t *ev)
     if (ctx == NULL) return;
 
     n = recv(c->fd, buf, sizeof(buf), 0);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EINTR) return;
+    }
     if (n <= 0) {
         /* 后端关闭或出错 */
         ctx->upstream_closed = 1;
@@ -1415,6 +1439,8 @@ ws_client_write_handler(rps_event_t *ev)
     rps_http_request_t *r;
     rps_upstream_t     *u;
     rps_ws_ctx_t       *ctx;
+
+    if (ev->timedout) return;
     ssize_t             sent;
 
     if (c == NULL) return;
@@ -1468,6 +1494,8 @@ ws_upstream_write_handler(rps_event_t *ev)
     rps_http_request_t *r;
     rps_upstream_t     *u;
     rps_ws_ctx_t       *ctx;
+
+    if (ev->timedout) return;
     ssize_t             sent;
 
     if (c == NULL) return;
