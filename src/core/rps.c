@@ -64,8 +64,8 @@ int main(int argc,char **argv){
     rps_cycle_t         *cycle,init_cycle;
     rps_cli_t            cli;
 
-    // 初始化错误日志
-    log = rps_log_init(NULL);
+    // 初始化错误日志（启动阶段输出到 stderr，全部级别）
+    log = rps_log_init(NULL, RPS_LOG_DEBUG);
 
     /**命令行参数的解析
      *  目前就先做一个 -c conf_file
