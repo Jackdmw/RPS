@@ -28,6 +28,7 @@ typedef struct
 
 static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli);
 static int rps_daemon();
+void rps_stop_daemon(rps_log_t *log);
 static void rps_master_process_cycle(rps_cycle_t *cycle);
 static rps_int_t rps_worker_process_init(rps_cycle_t * cycle);
 static void rps_worker_process_cycle(rps_cycle_t *cylce);
@@ -198,8 +199,7 @@ void sig_handler(int sig){
 /*
  * 停止 daemon：读 pid 文件 → kill(SIGTERM) → 等待退出 → SIGKILL 兜底
  */
-void
-rps_stop_daemon(rps_log_t *log)
+void rps_stop_daemon(rps_log_t *log)
 {
     char  buf[64];
     int   fd, n;
@@ -243,7 +243,10 @@ rps_stop_daemon(rps_log_t *log)
                 unlink("run_pid.conf");
                 return;
             }
-            usleep(100000); /* 100ms */
+            {
+                struct timespec ts = { .tv_sec = 0, .tv_nsec = 10000000 };
+                nanosleep(&ts, NULL); /* 100ms */
+            }
         }
     }
 
@@ -516,6 +519,16 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGQUIT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
+
+    /*
+     * 解锁从 master 继承的信号掩码。
+     * master fork 前 sigprocmask(BLOCK) 导致 worker 默认收不到 SIGTERM。
+     */
+    {
+        sigset_t set;
+        sigemptyset(&set);
+        sigprocmask(SIG_SETMASK, &set, NULL);
+    }
 
     /*
      * 事件驱动模式：epoll accept + 非阻塞 I/O。
