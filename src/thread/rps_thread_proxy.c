@@ -202,77 +202,76 @@ rps_thread_ws_start(rps_http_request_t *r, rps_upstream_t *u)
 {
     int       fd;
     ssize_t   n;
+    rps_int_t rc;
 
-    /* ── 1. 构造升级请求（复用 upstream 回调）── */
-    if (u->create_request && u->create_request(r, u) != RPS_OK) return RPS_ERROR;
-
-    /* ── 2. 发起 connect（复用 upstream）── */
-    rps_upstream_connect(r, u);
-    if (u->peer == NULL) return RPS_ERROR;
+    /* ── 1. prepare：选 peer + 构造请求 + 获取连接（复用 upstream）── */
+    if (rps_upstream_prepare(r, u) != RPS_OK) return RPS_ERROR;
     fd = u->peer->fd;
 
-    /* ── 3. 等 connect 完成 ── */
-    if (rps_thread_poll_wait(fd, POLLOUT, (int)u->connect_timeout) <= 0)
-        { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+    /* ── 2. poll-wait connect + 阻塞发请求 ── */
+    if (rps_thread_poll_wait(fd, POLLOUT, (int)u->connect_timeout) <= 0){ 
+        rps_upstream_finalize(r, RPS_ERROR); 
+        return RPS_ERROR; 
+    }
     {
         int e; socklen_t l = sizeof(e);
-        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &l) < 0 || e != 0)
-            { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+        if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &l) < 0 || e != 0){ 
+            rps_upstream_finalize(r, RPS_ERROR); 
+            return RPS_ERROR; 
+        }
     }
-
-    /* ── 4. 阻塞发升级请求 ── */
     {
         size_t len = (size_t)(u->request_bufs->last - u->request_bufs->pos);
-        if (rps_thread_blocking_send_all(fd, u->request_bufs->pos, len,
-                                         POLL_TIMEOUT) != 0)
-            { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+        if (rps_thread_blocking_send_all(fd, u->request_bufs->pos, len, POLL_TIMEOUT) != 0){ 
+            rps_upstream_finalize(r, RPS_ERROR); 
+            return RPS_ERROR; 
+        }
     }
 
-    /* ── 5. 收 101 + 校验 + 透传 ── */
+    /* ── 3. 收 101 + 校验 + 透传 ── */
+    u->response_buf->pos  = u->response_buf->start;
+    u->response_buf->last = u->response_buf->start;
     {
-        u_char buf[16384], *header_end = NULL, *p;
-        size_t buf_len = 0;
-
-        while (header_end == NULL) {
-            if (rps_thread_poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0)
-                { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
-            n = recv(fd, buf + buf_len, sizeof(buf) - buf_len, 0);
-            if (n <= 0)
-                { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
-            buf_len += (size_t)n;
-
-            for (p = buf; p + 3 < buf + buf_len; p++) {
-                if (p[0] == '\r' && p[1] == '\n'
-                    && p[2] == '\r' && p[3] == '\n')
-                    { header_end = p; break; }
+        u_char buf[16384];
+        while (1) {
+            if (rps_thread_poll_wait(fd, POLLIN, POLL_TIMEOUT) <= 0){ 
+                rps_upstream_finalize(r, RPS_ERROR); 
+                return RPS_ERROR; 
             }
-        }
+            n = recv(fd, buf, sizeof(buf), 0);
+            if (n <= 0){ 
+                rps_upstream_finalize(r, RPS_ERROR); 
+                return RPS_ERROR; 
+            }
+            if ((size_t)n > (size_t)(u->response_buf->end - u->response_buf->last)){ 
+                rps_upstream_finalize(r, RPS_ERROR); 
+                return RPS_ERROR; 
+            }
+            memcpy(u->response_buf->last, buf, (size_t)n);
+            u->response_buf->last += n;
 
-        /* 校验 101 */
-        {
-            u_char *cr = buf;
-            while (cr < header_end && *cr != '\r') cr++;
-            u_char *sp = buf;
-            while (sp < cr && *sp != ' ') sp++;
-            if (sp < cr) sp++;
-            if (!(sp + 3 <= cr && sp[0] == '1' && sp[1] == '0' && sp[2] == '1'))
-                { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
+            rc = ws_check_101(u, NULL);
+            if (rc == RPS_AGAIN) continue;
+            if (rc != RPS_OK){ 
+                rps_upstream_finalize(r, RPS_ERROR); 
+                return RPS_ERROR; 
+            }
+            break;
         }
+    }
 
-        /* 透传 101 给客户端 */
-        if (rps_thread_blocking_send_all(r->connection->fd, buf,
-                               (size_t)(header_end + 4 - buf), POLL_TIMEOUT) != 0)
+    /* 透传 101 给客户端 */
+    {
+        size_t len = (size_t)(u->response_buf->last - u->response_buf->pos);
+        if (rps_thread_blocking_send_all(r->connection->fd,
+                               u->response_buf->pos, len, POLL_TIMEOUT) != 0)
             { rps_upstream_finalize(r, RPS_ERROR); return RPS_ERROR; }
     }
 
-    /* ── 6. poll 双向转发 ── */
+    /* ── 4. poll 双向转发 ── */
     rps_thread_ws_forward(r, u);
     return RPS_HTTP_DONE;
 }
-
-/* ════════════════════════════════════════════════════════════
- * WebSocket poll 双向转发
- * ════════════════════════════════════════════════════════════ */
 
 void
 rps_thread_ws_forward(rps_http_request_t *r, rps_upstream_t *u)
