@@ -20,7 +20,9 @@
 typedef struct
 {
     rps_str_t   conf_file;
-
+    unsigned    test:1;
+    unsigned    stop:1;
+    int         log_level;     /* -l <level>, -1=未指定 */
 }rps_cli_t;
 
 
@@ -48,6 +50,28 @@ static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
                 rps_set_str((&(cli->conf_file)),argv[i+1]);
                 i++;
             }
+            else if(strcmp(argv[i],"-l")==0){
+                if(argc == i + 1){
+                    rps_log_error(RPS_LOG_ERR,log,0,"\"-l\" need argument (0-8)");
+                    return -1;
+                }
+                cli->log_level = atoi(argv[i+1]);
+                if(cli->log_level < 0 || cli->log_level > 8)
+                    cli->log_level = RPS_LOG_DEBUG;
+                i++;
+            }
+            else if(strcmp(argv[i],"-t")==0){
+                cli->test = 1;
+            }
+            else if(strcmp(argv[i],"-s")==0){
+                if(argc == i + 1){
+                    rps_log_error(RPS_LOG_ERR,log,0,"\"-s\" need argument (stop)");
+                    return -1;
+                }
+                if(strcmp(argv[i+1],"stop")==0)
+                    cli->stop = 1;
+                i++;
+            }
             else{
                 rps_log_error(RPS_LOG_EMERG,log,0,"arguments %s is undefined",argv[i]);
                 return -1;
@@ -64,38 +88,40 @@ int main(int argc,char **argv){
     rps_cycle_t         *cycle,init_cycle;
     rps_cli_t            cli;
 
+    memset(&cli, 0, sizeof(cli));
+    cli.log_level = -1;
+
     // 初始化错误日志（启动阶段输出到 stderr，全部级别）
     log = rps_log_init(NULL, RPS_LOG_DEBUG);
 
     /**命令行参数的解析
      *  目前就先做一个 -c conf_file
      */
-    rps_log_error(RPS_LOG_ALERT,log,0,"RPS start");
     if(parse_cmd(log,argv,argc,&cli)==-1){
         return 0;
     }
 
+    /* 命令行指定的日志级别 */
+    if (cli.log_level >= 0)
+        rps_log_set_level(log, (rps_uint_t)cli.log_level);
+
+    /* ── -s stop: 停止运行中的 daemon ── */
+    if (cli.stop) {
+        rps_stop_daemon(log);
+        return 0;
+    }
+    
+    rps_log_error(RPS_LOG_ALERT,log,0,"RPS start");
     /**
-     * 全局模块初始化，先就只做一个加编号  
-     */ 
+     * 全局模块初始化
+     */
     rps_preinit_modules(log);
 
-
-    /**
-     *  先创建一个 “old_cycle"
-     * 目前暂定的话，
-     * 日志对象
-     * 配置文件path（暂时先不支持一堆文件）
-     * 模块数组的挂载
-     */
     memset(&init_cycle,0,sizeof(init_cycle));
     init_cycle.log = log;
-    init_cycle.modules = rps_modules; 
+    init_cycle.modules = rps_modules;
     init_cycle.conf_file = cli.conf_file;
     init_cycle.modules_n = rps_modules_n;
-
-    // TODO: 初始化，保存一些变量，比如命令行参数
-
 
     cycle = rps_init_cycle(&init_cycle);
 
@@ -103,6 +129,15 @@ int main(int argc,char **argv){
         rps_log_error(RPS_LOG_ERR,log,0,"New cycle create failed!");
         return 1;
     }
+
+    /* ── -t: 仅测试配置，打印结果后退出 ── */
+    if (cli.test) {
+        rps_log_error(RPS_LOG_ALERT, log, 0,
+                      "configuration file %s test is successful",
+                      cli.conf_file.data);
+        return 0;
+    }
+
     rps_master_process_cycle(cycle);
 } 
 static  int rps_daemon(){
@@ -158,6 +193,64 @@ void sig_handler(int sig){
     default:
         break;
     }
+}
+
+/*
+ * 停止 daemon：读 pid 文件 → kill(SIGTERM) → 等待退出 → SIGKILL 兜底
+ */
+void
+rps_stop_daemon(rps_log_t *log)
+{
+    char  buf[64];
+    int   fd, n;
+    pid_t pid;
+
+    fd = open("run_pid.conf", O_RDONLY);
+    if (fd == -1) {
+        rps_log_error(RPS_LOG_ERR, log, errno,
+                      "failed to open pid file \"run_pid.conf\"");
+        return;
+    }
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) {
+        rps_log_error(RPS_LOG_ERR, log, 0, "pid file is empty");
+        return;
+    }
+    buf[n] = '\0';
+    pid = (pid_t)atoi(buf);
+    if (pid <= 0) {
+        rps_log_error(RPS_LOG_ERR, log, 0, "invalid pid in pid file");
+        return;
+    }
+
+    rps_log_error(RPS_LOG_INFO, log, 0,
+                  "sending SIGTERM to process %d", (int)pid);
+
+    if (kill(pid, SIGTERM) == -1) {
+        rps_log_error(RPS_LOG_ERR, log, errno,
+                      "failed to send SIGTERM to %d", (int)pid);
+        return;
+    }
+
+    /* 等待进程退出（最多 3 秒） */
+    {
+        int retries = 30;
+        while (retries-- > 0) {
+            if (kill(pid, 0) == -1 && errno == ESRCH) {
+                rps_log_error(RPS_LOG_INFO, log, 0,
+                              "process %d exited", (int)pid);
+                unlink("run_pid.conf");
+                return;
+            }
+            usleep(100000); /* 100ms */
+        }
+    }
+
+    rps_log_error(RPS_LOG_WARN, log, 0,
+                  "process %d did not exit, sending SIGKILL", (int)pid);
+    kill(pid, SIGKILL);
+    unlink("run_pid.conf");
 }
 
 static void rps_master_process_cycle(rps_cycle_t *cycle){
@@ -492,7 +585,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
 /*
  * 监听 socket 读就绪 → accept 新连接 → 创建 request → 注册读事件
  */
-static void
+void
 rps_event_accept(rps_event_t *ev)
 {
     rps_connection_t       *c, *new_c;
