@@ -40,6 +40,12 @@ rps_log_t *rps_log_init(u_char *file_path, rps_uint_t level) {
     return &rps_log;
 }
 
+void
+rps_log_set_level(rps_log_t *log, rps_uint_t level)
+{
+    if (log) log->log_level = level;
+}
+
 static rps_str_t err_levels[] = {
     rps_string("stderr"),rps_string("emerg"), rps_string("alert"),
     rps_string("crit"),   rps_string("error"), rps_string("warn"),
