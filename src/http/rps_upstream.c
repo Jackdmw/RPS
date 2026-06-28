@@ -809,9 +809,15 @@ rps_upstream_cache_idle_handler(rps_event_t *ev)
     if (peer == NULL) return;
 
     /*
-     * 遍历 upstream 缓存栈找到该连接并移除。
-     * peer->data 存储了指向 upstream_conf 的指针（在 free_peer 中设置）。
+     * EPOLLIN（非超时）：后端主动关闭连接（FIN）。
+     * 读走 FIN 数据，确保 fd 可安全关闭。
      */
+    if (!ev->timedout && peer->fd > 0) {
+        u_char dummy[64];
+        recv(peer->fd, dummy, sizeof(dummy), 0);
+    }
+
+    /* 遍历 upstream 缓存栈找到该连接并移除 */
     ucf = peer->data;
     if (ucf == NULL) {
         rps_upstream_close_peer_conn(peer);
@@ -821,16 +827,16 @@ rps_upstream_cache_idle_handler(rps_event_t *ev)
     cached = ucf->free_peers.elts;
     for (i = 0; i < ucf->free_peers.nelts; i++) {
         if (cached[i].connection == peer) {
-            /* 移除：将最后一个元素移到当前位置，缩减数组 */
-            if (i < ucf->free_peers.nelts - 1) {
+            if (i < ucf->free_peers.nelts - 1)
                 cached[i] = cached[ucf->free_peers.nelts - 1];
-            }
             ucf->free_peers.nelts--;
             break;
         }
     }
 
     rps_event_del_timer(ev);
+    if (ev->active)
+        peer->cycle->event_engine->del_event(ev, RPS_READ_EVENT);
     rps_upstream_close_peer_conn(peer);
 }
 
@@ -860,9 +866,11 @@ rps_upstream_get_peer(rps_http_request_t *r, rps_upstream_t *u)
             goto new_peer;
         }
 
-        /* 移除空闲定时器 */
+        /* 移除空闲定时器和读事件 */
         rps_event_del_timer(peer->read);
         peer->read->timedout = 0;
+        if (peer->read->active)
+            r->cycle->event_engine->del_event(peer->read, RPS_READ_EVENT);
 
         /* 弹出缓存栈 */
         ucf->free_peers.nelts--;
@@ -912,12 +920,13 @@ rps_upstream_free_peer(rps_upstream_t *u)
     cached->idle_since = rps_current_msec();
 
     /*
-     * 设置空闲超时定时器。
-     * 复用 peer->read 事件（此时已无活跃 IO），
-     * peer->data 暂存 upstream_conf 指针以便超时回调查找。
+     * 注册读事件 + 空闲超时定时器。
+     * 读事件用于检测后端主动关闭（FIN），定时器用于空闲超时回收。
+     * peer->data 暂存 upstream_conf 指针以便回调查找。
      */
     peer->data = ucf;
     peer->read->handler = rps_upstream_cache_idle_handler;
 
+    peer->cycle->event_engine->add_event(peer->read, RPS_READ_EVENT);
     rps_event_add_timer(peer->read, ucf->keepalive_timeout);
 }
