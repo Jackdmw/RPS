@@ -10,10 +10,10 @@
 #include <poll.h>
 #include <sys/socket.h>
 
-/* ════════════════════════════════════════════════════════════
- * 连接池互斥锁
- * ════════════════════════════════════════════════════════════ */
 
+/**
+ * 线程池互斥锁初始化，初始化cycle中的可变运行资源，两个空闲连接链表
+ */
 int
 rps_thread_mutex_init(rps_cycle_t *cycle)
 {
@@ -24,7 +24,9 @@ rps_thread_mutex_init(rps_cycle_t *cycle)
     }
     return RPS_OK;
 }
-
+/**
+ * 销毁两个互斥锁
+ */
 void
 rps_thread_mutex_destroy(rps_cycle_t *cycle)
 {
@@ -37,31 +39,29 @@ rps_thread_mutex_destroy(rps_cycle_t *cycle)
  * ════════════════════════════════════════════════════════════ */
 
 /* poll 等待 fd 可读/可写，单位毫秒。返回 1=就绪, 0=超时, -1=错误 */
-static int
-poll_wait(int fd, short events, int timeout_ms)
+int
+rps_thread_poll_wait(int fd, short events, int timeout_ms)
 {
     struct pollfd pfd;
+    int           ret;
     pfd.fd      = fd;
     pfd.events  = events;
-    pfd.revents = 0;
-    return poll(&pfd, 1, timeout_ms);
-}
 
-/* 阻塞读指定字节数，返回实际读取量，<0=错误 */
-static ssize_t
-blocking_recv(int fd, u_char *buf, size_t want, int timeout_ms)
-{
-    if (poll_wait(fd, POLLIN, timeout_ms) <= 0) return -1;
-    return recv(fd, buf, want, 0);
+    do {
+        pfd.revents = 0;
+        ret = poll(&pfd, 1, timeout_ms);
+    } while (ret == -1 && errno == EINTR);
+
+    return ret;
 }
 
 /* 阻塞写，循环直到全部写完或出错，返回 0=成功, -1=失败 */
-static int
-blocking_send_all(int fd, const u_char *buf, size_t len, int timeout_ms)
+int
+rps_thread_blocking_send_all(int fd, const u_char *buf, size_t len, int timeout_ms)
 {
     size_t sent = 0;
     while (sent < len) {
-        if (poll_wait(fd, POLLOUT, timeout_ms) <= 0) return -1;
+        if (rps_thread_poll_wait(fd, POLLOUT, timeout_ms) <= 0) return -1;
         ssize_t n = send(fd, buf + sent, len - sent, MSG_NOSIGNAL);
         if (n <= 0) return -1;
         sent += (size_t)n;
@@ -85,8 +85,8 @@ thread_read_request(rps_http_request_t *r)
     b->last = b->start;
 
     for (;;) {
-        n = blocking_recv(r->connection->fd, b->last,
-                          (size_t)(b->end - b->last), 60000);
+        if (rps_thread_poll_wait(r->connection->fd, POLLIN, 60000) <= 0) return -1;
+        n = recv(r->connection->fd, b->last, (size_t)(b->end - b->last), 0);
         if (n <= 0) return (n == 0) ? 0 : -1;
         b->last += n;
 
@@ -117,57 +117,6 @@ thread_read_request(rps_http_request_t *r)
         }
     }
 }
-
-/* 重置 request 用于 keepalive 下一个请求 */
-static void
-thread_reset_request(rps_http_request_t *r)
-{
-    rps_memzero(&r->headers_in, sizeof(rps_http_headers_in_t));
-    rps_memzero(&r->headers_out, sizeof(rps_http_headers_out_t));
-
-    r->headers_in.connection.key     = (rps_str_t)rps_string("connection");
-    r->headers_in.content_length.key = (rps_str_t)rps_string("content-length");
-    r->headers_in.user_agent.key     = (rps_str_t)rps_string("user-agent");
-    r->headers_in.content_type.key   = (rps_str_t)rps_string("content-type");
-    r->headers_in.upgrade.key        = (rps_str_t)rps_string("upgrade");
-
-    r->headers_out.content_type.key = (rps_str_t)rps_string("content-type");
-    r->headers_out.server.key       = (rps_str_t)rps_string("server");
-    r->headers_out.status.key       = (rps_str_t)rps_string("status");
-
-    r->headers_out.status.value           = (rps_str_t)rps_string("200 OK");
-    r->headers_out.server.value           = (rps_str_t)rps_string("RPS");
-    r->headers_out.content_type.value     = (rps_str_t)rps_null_string;
-    r->headers_out.content_length_n.value = (rps_str_t)rps_null_string;
-
-    r->headers_in.headers_n  = 0;
-    r->headers_out.headers_n = 0;
-
-    r->method       = (rps_str_t)rps_null_string;
-    r->uri          = (rps_str_t)rps_null_string;
-    r->args         = (rps_str_t)rps_null_string;
-    r->http_version = (rps_str_t)rps_null_string;
-    r->host         = (rps_str_t)rps_null_string;
-
-    r->out_chain    = NULL;
-    r->upstream     = NULL;
-    r->loc_conf     = NULL;
-    r->srv_conf     = NULL;
-    r->uri_changed  = 0;
-    r->internal_redirect = 0;
-    r->phase_index  = 0;
-
-    r->request_body->pos   = r->request_body->start;
-    r->request_body->last  = r->request_body->start;
-    r->request_body_rest   = 0;
-    r->reading_body        = 0;
-
-    r->keepalive = 1;
-}
-
-/* ════════════════════════════════════════════════════════════
- * 线程入口
- * ════════════════════════════════════════════════════════════ */
 
 int
 rps_thread_spawn(rps_cycle_t *cycle, rps_connection_t *c,
@@ -201,13 +150,13 @@ rps_thread_spawn(rps_cycle_t *cycle, rps_connection_t *c,
 void *
 rps_thread_worker(void *arg)
 {
-    rps_thread_ctx_t         *ctx = arg;
-    rps_cycle_t              *cycle = ctx->cycle;
-    rps_connection_t         *c = ctx->c;
-    rps_http_request_t       *r = ctx->r;
+    rps_thread_ctx_t          *ctx = arg;
+    rps_cycle_t               *cycle = ctx->cycle;
+    rps_connection_t          *c = ctx->c;
+    rps_http_request_t        *r = ctx->r;
     rps_http_core_main_conf_t *cmcf = NULL;
     rps_http_conf_container_t *container;
-    int                       ret;
+    int                        ret;
 
     /* 获取 main_conf */
     if (ctx->conf_ctx) {
@@ -219,18 +168,17 @@ rps_thread_worker(void *arg)
     rps_log_error(RPS_LOG_INFO, cycle->log, 0,
                   "[thread %lu] started", (unsigned long)pthread_self());
 
-    /* keepalive 循环 */
+    /*
+     * keepalive 循环：
+     *   read_request 失败（ret<=0）→ break，线程自己清理
+     *   read_request 成功（ret>0）→ run_phases，内部完成 finalize+complete
+     */
     for (;;) {
-        int request_finalized = 0;
-
         ret = thread_read_request(r);
         if (ret <= 0) {
-            if (ret == 0)
-                rps_log_error(RPS_LOG_DEBUG, cycle->log, 0,
-                              "[thread] client closed");
-            else
-                rps_log_error(RPS_LOG_ERR, cycle->log, errno,
-                              "[thread] read error");
+            /* 解析/读失败：请求未被引擎消费，线程自己清理 */
+            rps_http_finalize_request(r, RPS_ERROR);
+            rps_http_complete_request(c);
             break;
         }
 
@@ -238,61 +186,24 @@ rps_thread_worker(void *arg)
             container = ((void **)ctx->conf_ctx)[rps_http_module.index];
             if (container) r->main_conf = container->main_conf;
         }
-        if (cmcf == NULL) cmcf = r->main_conf
-            ? r->main_conf[rps_http_core_module.ctx_index] : NULL;
+        if (cmcf == NULL)
+            cmcf = r->main_conf ? r->main_conf[rps_http_core_module.ctx_index] : NULL;
 
         if (cmcf == NULL) {
-            rps_log_error(RPS_LOG_ERR, cycle->log, 0,
-                          "[thread] no config");
+            rps_http_finalize_request(r, RPS_ERROR);
+            rps_http_complete_request(c);
             break;
         }
 
-        /* 同步执行阶段引擎 */
         c->data = NULL;
         rps_http_run_phases(r, cmcf);
+        /* 阶段引擎 + upstream_finalize 已处理 request 生命周期 */
 
-        /*
-         * 阶段引擎可能已内部 finalize r（如 proxy 非线程模式返回 RPS_OK、
-         * 默认 handler 等路径）。通过 c->data 是否仍指向 r 来判断：
-         *   c->data == r  → r 仍存活，线程负责 finalize
-         *   c->data != r  → r 已被 finalize + complete_request 销毁
-         */
-        if (c->data != r) {
-            request_finalized = 1;
-            /* complete_request 已创建新 request 或释放了连接 */
-            if (c->data != NULL && c->close == 0) {
-                /* keepalive：complete_request 创建了新 request */
-                r = c->data;
-                r->start_msec = rps_current_msec();
-                continue;
-            }
-            break;
-        }
-
-        if (!r->keepalive) {
-            rps_log_error(RPS_LOG_DEBUG, cycle->log, 0,
-                          "[thread] keepalive off, closing");
-            break;
-        }
-
-        thread_reset_request(r);
+        if (c->close) break;
+        r = c->data;
+        if (r == NULL) break;
     }
-
-    /*
-     * 如果请求未被阶段引擎 finalize，由线程自己清理。
-     * c->data == r 表示 r 仍存活。
-     */
-    if (c->data == r) {
-        rps_http_finalize_request(r, RPS_OK);
-    }
-
-    /* 归还连接（线程安全） */
-    pthread_mutex_lock(&cycle->conn_mutex);
-    if (c->close == 0) rps_free_connection(c);
-    pthread_mutex_unlock(&cycle->conn_mutex);
-
-    rps_log_error(RPS_LOG_INFO, cycle->log, 0,
-                  "[thread %lu] exiting", (unsigned long)pthread_self());
+    rps_log_error(RPS_LOG_INFO, cycle->log, 0, "[thread %lu] exiting", (unsigned long)pthread_self());
     free(ctx);
     return NULL;
 }
