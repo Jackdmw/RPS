@@ -35,6 +35,7 @@ static rps_int_t rps_http_proxy_create_request(rps_http_request_t *r,
                                                 rps_upstream_t *u);
 static rps_int_t rps_http_proxy_process_response(rps_http_request_t *r,
                                                   rps_upstream_t *u);
+rps_int_t rps_http_proxy_parse_response(rps_http_request_t *r, rps_upstream_t *u);
 
 /* proxy 专用写事件续传 */
 static void rps_http_proxy_write_continue(rps_event_t *ev);
@@ -53,6 +54,7 @@ typedef struct {
 /* WS upstream 协议回调 */
 static rps_int_t ws_create_request(rps_http_request_t *r, rps_upstream_t *u);
 static rps_int_t ws_process_response(rps_http_request_t *r, rps_upstream_t *u);
+rps_int_t ws_check_101(rps_upstream_t *u, u_char **out_header_end);
 
 /* WS 双向转发 event handler */
 static void ws_client_read_handler(rps_event_t *ev);
@@ -506,11 +508,11 @@ rps_http_proxy_handler(rps_http_request_t *r)
          * 返回 RPS_AGAIN 阻止阶段引擎 auto-finalize——线程 worker
          * 在 run_phases 返回后自行管理 keepalive 循环和 finalize。
          */
-        if (u->create_request == ws_create_request) {
+        /* 线程模式：proxy_run 内部通过 rps_upstream_finalize 完成全部清理 */
+        if (u->create_request == ws_create_request)
             rps_thread_ws_start(r, u);
-        } else {
+        else
             rps_thread_proxy_run(r, u);
-        }
         return RPS_AGAIN;
     }
 
@@ -713,16 +715,20 @@ rps_http_proxy_create_request(rps_http_request_t *r, rps_upstream_t *u)
  * 返回 RPS_AGAIN  — 数据不足（等下次读）或写阻塞（挂起续传）
  * 返回 RPS_ERROR  — 解析 / 发送失败
  */
-static rps_int_t
-rps_http_proxy_process_response(rps_http_request_t *r, rps_upstream_t *u)
+/*
+ * 解析后端 HTTP 响应头（纯逻辑，无 IO）。
+ * 返回 RPS_AGAIN(头不完整), RPS_ERROR, RPS_OK。
+ * 线程和 reactor 共用。
+ */
+rps_int_t
+rps_http_proxy_parse_response(rps_http_request_t *r, rps_upstream_t *u)
 {
-    u_char   *p, *end, *line, *header_end;
-    rps_int_t wrc;
+    u_char *p, *end, *header_end;
 
     p   = u->response_buf->pos;
     end = u->response_buf->last;
 
-    /* 找 \r\n\r\n 标记头部结束 */
+    /* 找 \r\n\r\n */
     header_end = NULL;
     {
         u_char *s = p;
@@ -735,35 +741,25 @@ rps_http_proxy_process_response(rps_http_request_t *r, rps_upstream_t *u)
             s++;
         }
     }
+    if (header_end == NULL) return RPS_AGAIN;
 
-    if (header_end == NULL) {
-        return RPS_AGAIN;   /* 头部不完整，等更多数据 */
-    }
-
-    /* ── 解析 status line：HTTP/x.x → 定 keepalive 默认值 ── */
-    line = p;
+    /* ── 解析 status line ── */
     {
-        u_char *status_cr = line;
+        u_char *status_cr = p;
         u_char *sp;
         while (status_cr < header_end && *status_cr != '\r') status_cr++;
         if (status_cr >= header_end) return RPS_ERROR;
 
-        /* 提取 HTTP 版本，决定 keepalive 默认策略 */
-        sp = line;
+        sp = p;
         while (sp < status_cr && *sp != ' ') sp++;
-
-        if (sp - line >= 8) {
-            /* HTTP/1.1 默认 keep-alive, HTTP/1.0 默认 close */
-            u->keepalive = (line[5] == '1' && line[6] == '.' && line[7] == '1') ? 1 : 0;
-        }
+        if (sp - p >= 8)
+            u->keepalive = (p[5] == '1' && p[6] == '.' && p[7] == '1') ? 1 : 0;
 
         if (sp < status_cr) {
-            sp++;  /* 跳过第一个空格 */
+            sp++;
             r->headers_out.status.value.data = sp;
             r->headers_out.status.value.len  = (rps_uint_t)(status_cr - sp);
         }
-
-        /* 跳过 status line 的 \r\n */
         p = status_cr + 2;
     }
 
@@ -773,56 +769,58 @@ rps_http_proxy_process_response(rps_http_request_t *r, rps_upstream_t *u)
         while (cr < header_end && *cr != '\r') cr++;
         if (cr >= header_end) break;
 
-        /* 找冒号分隔 key: value */
-        {
-            u_char *colon = p;
-            while (colon < cr && *colon != ':') colon++;
-            if (colon < cr) {
-                rps_str_t key, value;
-                key.data = p;
-                key.len  = (rps_uint_t)(colon - p);
+        u_char *colon = p;
+        while (colon < cr && *colon != ':') colon++;
+        if (colon < cr) {
+            rps_str_t key, value;
+            key.data = p;
+            key.len  = (rps_uint_t)(colon - p);
+            colon++;
+            while (colon < cr && *colon == ' ') colon++;
+            value.data = colon;
+            value.len  = (rps_uint_t)(cr - colon);
 
-                /* 跳过冒号和空白 */
-                colon++;
-                while (colon < cr && *colon == ' ') colon++;
-                value.data = colon;
-                value.len  = (rps_uint_t)(cr - colon);
+            rps_str_lowercase(key);
 
-                rps_str_lowercase(key);
-
-                /* 填入固定字段，加速后续访问 */
-                if (rps_strcmp_with_cstr(key, "content-type")) {
-                    r->headers_out.content_type.value = value;
-                } else if (rps_strcmp_with_cstr(key, "content-length")) {
-                    r->headers_out.content_length_n.value = value;
-                    u->content_length_n = (size_t)rps_atoi(value.data, value.len);
-                    rps_http_set_content_length(r, u->content_length_n);
-                } else if (rps_strcmp_with_cstr(key, "server")) {
-                    r->headers_out.server.value = value;
-                } else if (rps_strcmp_with_cstr(key, "connection")) {
-                    /* 后端 Connection 头决定此连接是否可 keepalive 复用 */
-                    rps_str_lowercase(value);
-                    if (value.len == 5 && memcmp(value.data, "close", 5) == 0) {
-                        u->keepalive = 0;
-                    } else if (value.len == 10 && memcmp(value.data, "keep-alive", 10) == 0) {
-                        u->keepalive = 1;
-                    }
-                } else {
-                    /* 透传其他 header（Set-Cookie, ETag 等） */
-                    rps_http_add_response_header(r, key, value);
-                }
-            }
+            if (rps_strcmp_with_cstr(key, "content-type"))
+                r->headers_out.content_type.value = value;
+            else if (rps_strcmp_with_cstr(key, "content-length")) {
+                r->headers_out.content_length_n.value = value;
+                u->content_length_n = (size_t)rps_atoi(value.data, value.len);
+                rps_http_set_content_length(r, u->content_length_n);
+            } else if (rps_strcmp_with_cstr(key, "server"))
+                r->headers_out.server.value = value;
+            else if (rps_strcmp_with_cstr(key, "connection")) {
+                rps_str_lowercase(value);
+                if (value.len == 5 && memcmp(value.data, "close", 5) == 0)
+                    u->keepalive = 0;
+                else if (value.len == 10 && memcmp(value.data, "keep-alive", 10) == 0)
+                    u->keepalive = 1;
+            } else
+                rps_http_add_response_header(r, key, value);
         }
-
-        p = cr + 2;  /* 跳过 \r\n */
+        p = cr + 2;
     }
 
-    /* 移动到 body 起始，记录初始 body 字节数 */
+    /* 移动 pos 到 body 起始，记录初始 body 字节数 */
     u->response_buf->pos = header_end + 4;
     u->body_received = (size_t)(u->response_buf->last - u->response_buf->pos);
     u->header_complete = 1;
+
+    return RPS_OK;
+}
+
+static rps_int_t
+rps_http_proxy_process_response(rps_http_request_t *r, rps_upstream_t *u)
+{
+    rps_int_t rc;
+
+    rc = rps_http_proxy_parse_response(r, u);
+    if (rc != RPS_OK) return rc;
+
+    /* 解析完成 → 发送响应头 + 挂 body chain + 推送已有 body */
     u->headers_sent    = 1;
-    u->read_state = RPS_UPSTREAM_READ_BODY;
+    u->read_state      = RPS_UPSTREAM_READ_BODY;
     /*
      * 先构造 header chain（header_filter），再拼 body chain，
      * 最后统一 write_filter 发送。避免 send_header EAGAIN 时
@@ -1134,18 +1132,18 @@ ws_create_request(rps_http_request_t *r, rps_upstream_t *u)
 }
 
 /*
- * upstream 回调：解析后端 101 响应，透传给客户端，切换为双向转发模式
+ * 校验 WS 101 响应头（纯逻辑，线程/reactor 共用）。
+ * 返回 RPS_AGAIN(头不完整), RPS_ERROR(非101), RPS_OK。
+ * header_end 输出：指向 \r\n\r\n 开始位置。
  */
-static rps_int_t
-ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
+rps_int_t
+ws_check_101(rps_upstream_t *u, u_char **out_header_end)
 {
-    u_char   *p, *end, *header_end;
-
-    p   = u->response_buf->pos;
-    end = u->response_buf->last;
+    u_char *p   = u->response_buf->pos;
+    u_char *end = u->response_buf->last;
+    u_char *header_end = NULL;
 
     /* 找 \r\n\r\n */
-    header_end = NULL;
     {
         u_char *s = p;
         while (s + 3 < end) {
@@ -1157,24 +1155,31 @@ ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
             s++;
         }
     }
-
     if (header_end == NULL) return RPS_AGAIN;
 
-    /* ── 校验 101 状态码 ── */
+    /* 校验 status line 含 " 101 " */
     {
         u_char *cr = p;
         while (cr < header_end && *cr != '\r') cr++;
-
-        /* 跳过 "HTTP/x.x "，定位状态码 */
         u_char *sp = p;
         while (sp < cr && *sp != ' ') sp++;
         if (sp < cr) sp++;
         if (!(sp + 3 <= cr && sp[0] == '1' && sp[1] == '0' && sp[2] == '1'))
-        {
-            rps_log_error(RPS_LOG_ERR, r->log, 0, "WS: backend did not return 101");
             return RPS_ERROR;
-        }
     }
+
+    if (out_header_end) *out_header_end = header_end;
+    return RPS_OK;
+}
+
+static rps_int_t
+ws_process_response(rps_http_request_t *r, rps_upstream_t *u)
+{
+    u_char  *header_end;
+    rps_int_t rc;
+
+    rc = ws_check_101(u, &header_end);
+    if (rc != RPS_OK) return rc;
 
     /*
      * 101 响应直接透传后端原始数据，不过 header_filter。

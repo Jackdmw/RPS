@@ -35,6 +35,10 @@ typedef struct {
     rps_flag_t      pass_request_body;      /* 是否转发客户端请求体，默认 1 */
 } rps_http_proxy_loc_conf_t;
 
+/* HTTP 响应头解析（纯逻辑，线程/reactor 共用） */
+rps_int_t rps_http_proxy_parse_response(rps_http_request_t *r, rps_upstream_t *u);
+rps_int_t ws_check_101(rps_upstream_t *u, u_char **out_header_end);
+
 extern rps_module_t rps_http_proxy_module;
 
 #endif
