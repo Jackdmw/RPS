@@ -103,16 +103,16 @@ rps_int_t  rps_event_core_init_process(rps_cycle_t *cycle){
 
     worker_connections = conf -> worker_connections;
 
-    cycle -> connections = rps_palloc(cycle -> pool, sizeof(rps_connection_t) * worker_connections);
+    cycle -> connections = rps_pcalloc(cycle -> pool, sizeof(rps_connection_t) * worker_connections);
     if (cycle -> connections == NULL){
         return RPS_ERROR;
     }
 
-    cycle -> reads = rps_palloc(cycle -> pool, sizeof(rps_event_t) * worker_connections);
+    cycle -> reads = rps_pcalloc(cycle -> pool, sizeof(rps_event_t) * worker_connections);
     if (cycle -> reads == NULL){
         return RPS_ERROR;
     }
-    cycle -> writes = rps_palloc(cycle -> pool, sizeof(rps_event_t) * worker_connections);
+    cycle -> writes = rps_pcalloc(cycle -> pool, sizeof(rps_event_t) * worker_connections);
     if (cycle -> writes == NULL){
         return RPS_ERROR;
     }
