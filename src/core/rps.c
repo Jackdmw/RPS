@@ -20,6 +20,7 @@
 typedef struct
 {
     rps_str_t   conf_file;
+    rps_str_t   prefix;         /* -p <path>, 空串则默认用 conf 所在目录 */
     unsigned    test:1;
     unsigned    stop:1;
     int         log_level;     /* -l <level>, -1=未指定 */
@@ -27,8 +28,24 @@ typedef struct
 
 
 static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli);
+
+/* 将相对路径转为绝对路径（基于 CWD），原地修改 buf */
+static void
+rps_resolve_path(u_char *buf, size_t size)
+{
+    u_char tmp[512];
+
+    if (buf[0] == '/' || buf[0] == '\0') return;
+    if (getcwd((char *)tmp, sizeof(tmp)) == NULL) return;
+    size_t cwd_len = strlen((char *)tmp);
+    if (cwd_len + 1 + strlen((char *)buf) >= size) return;
+    tmp[cwd_len] = '/';
+    strncpy((char *)tmp + cwd_len + 1, (char *)buf, strlen(buf));
+    tmp[strlen(tmp)] = '\0';
+    memcpy(buf, tmp, strlen((char *)tmp) + 1);
+}
 static int rps_daemon();
-void rps_stop_daemon(rps_log_t *log);
+void rps_stop_daemon(rps_log_t *log, const char *pid_path);
 static void rps_master_process_cycle(rps_cycle_t *cycle);
 static rps_int_t rps_worker_process_init(rps_cycle_t * cycle);
 static void rps_worker_process_cycle(rps_cycle_t *cylce);
@@ -61,6 +78,14 @@ static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
                     cli->log_level = RPS_LOG_DEBUG;
                 i++;
             }
+            else if(strcmp(argv[i],"-p")==0){
+                if(argc == i + 1){
+                    rps_log_error(RPS_LOG_ERR,log,0,"\"-p\" need argument (prefix path)");
+                    return -1;
+                }
+                rps_set_str((&(cli->prefix)), argv[i+1]);
+                i++;
+            }
             else if(strcmp(argv[i],"-t")==0){
                 cli->test = 1;
             }
@@ -84,38 +109,53 @@ static int parse_cmd(rps_log_t *log,char *argv[],int argc,rps_cli_t *cli){
 int main(int argc,char **argv){
 
     rps_log_t           *log;
-    rps_buf_t           *b;
-    rps_uint_t           i;
     rps_cycle_t         *cycle,init_cycle;
     rps_cli_t            cli;
+    u_char               prefix_buf[512];      /* prefix 缓冲 */
+    rps_str_t            prefix;
 
     memset(&cli, 0, sizeof(cli));
     cli.log_level = -1;
 
-    // 初始化错误日志（启动阶段输出到 stderr，全部级别）
     log = rps_log_init(NULL, RPS_LOG_DEBUG);
 
-    /**命令行参数的解析
-     *  目前就先做一个 -c conf_file
-     */
-    if(parse_cmd(log,argv,argc,&cli)==-1){
+    if(parse_cmd(log,argv,argc,&cli)==-1)
         return 0;
+    if (cli.conf_file.data == NULL){
+        rps_log_error(RPS_LOG_ERR, log, 0, "RPS must need config file with \"-c filename\" ");
+    }
+    /* ── 1. config 路径 → 绝对路径 ── */
+    {
+        static u_char abs_conf[512];
+        memcpy(abs_conf, cli.conf_file.data, cli.conf_file.len);
+        abs_conf[cli.conf_file.len] = '\0';
+        rps_resolve_path(abs_conf, sizeof(abs_conf));
+        cli.conf_file.data = abs_conf;
+        cli.conf_file.len  = strlen((char *)abs_conf);
     }
 
-    /* 命令行指定的日志级别 */
+    /* 命令行日志级别 */
     if (cli.log_level >= 0)
         rps_log_set_level(log, (rps_uint_t)cli.log_level);
 
-    /* ── -s stop: 停止运行中的 daemon ── */
-    if (cli.stop) {
-        rps_stop_daemon(log);
-        return 0;
+    /* ── 2. 确定 prefix（先拷到 prefix_buf，避免修改 argv）── */
+    if (cli.prefix.data && cli.prefix.len > 0) {
+        memcpy(prefix_buf, cli.prefix.data, cli.prefix.len);
+        prefix_buf[cli.prefix.len] = '\0';
+        rps_resolve_path(prefix_buf, sizeof(prefix_buf));
+        prefix.data = prefix_buf;
+        prefix.len  = strlen((char *)prefix_buf);
+    } else {
+        u_char *slash = (u_char *)strrchr((const char *)cli.conf_file.data, '/');
+        size_t  len   = (size_t)(slash - cli.conf_file.data);
+        memcpy(prefix_buf, cli.conf_file.data, len);
+        prefix_buf[len] = '\0';
+        prefix.data = prefix_buf;
+        prefix.len  = len;
     }
-    
+    cli.prefix = prefix;
+
     rps_log_error(RPS_LOG_ALERT,log,0,"RPS start");
-    /**
-     * 全局模块初始化
-     */
     rps_preinit_modules(log);
 
     memset(&init_cycle,0,sizeof(init_cycle));
@@ -125,21 +165,57 @@ int main(int argc,char **argv){
     init_cycle.modules_n = rps_modules_n;
 
     cycle = rps_init_cycle(&init_cycle);
-
     if(cycle == NULL){
         rps_log_error(RPS_LOG_ERR,log,0,"New cycle create failed!");
         return 1;
     }
 
-    /* ── -t: 仅测试配置，打印结果后退出 ── */
+    /* ── 4. 将配置中的相对 pid 路径解析为 prefix 下的绝对路径 ── */
+    {
+        rps_core_conf_t *ccf;
+        rps_uint_t k;
+        for (k = 0; k < rps_modules_n; k++)
+            if (rps_strcmp_with_cstr(rps_modules[k]->name, "core")) break;
+        ccf = cycle->conf_ctx[k];
+        if (ccf && ccf->pid.data && ccf->pid.data[0] != '/') {
+            size_t plen  = prefix.len;
+            size_t total = plen + 1 + ccf->pid.len;
+            u_char *abs_path = rps_palloc(cycle->pool, total + 1);
+            if (abs_path) {
+                memcpy(abs_path, prefix.data, plen);
+                abs_path[plen] = '/';
+                memcpy(abs_path + plen + 1, ccf->pid.data, ccf->pid.len);
+                abs_path[total] = '\0';
+                ccf->pid.data = abs_path;
+                ccf->pid.len  = total;
+            }
+        }
+    }
+
+    /* ── 5. -s stop：使用配置中已解析的 pid 绝对路径 ── */
+    if (cli.stop) {
+        rps_core_conf_t *ccf;
+        rps_uint_t k;
+        for (k = 0; k < rps_modules_n; k++)
+            if (rps_strcmp_with_cstr(rps_modules[k]->name, "core")) break;
+        ccf = cycle->conf_ctx[k];
+        rps_stop_daemon(log, ccf ? (char *)ccf->pid.data : NULL);
+        rps_destroy_pool(cycle -> pool);
+        return 0;
+    }
+
+    /* ── 6. -t: 测试配置后退出 ── */
     if (cli.test) {
         rps_log_error(RPS_LOG_ALERT, log, 0,
                       "configuration file %s test is successful",
                       cli.conf_file.data);
+        rps_destroy_pool(cycle -> pool);
         return 0;
     }
 
     rps_master_process_cycle(cycle);
+    rps_destroy_pool(cycle -> pool);
+    return 0;
 } 
 static  int rps_daemon(){
     pid_t pid;
@@ -199,16 +275,18 @@ void sig_handler(int sig){
 /*
  * 停止 daemon：读 pid 文件 → kill(SIGTERM) → 等待退出 → SIGKILL 兜底
  */
-void rps_stop_daemon(rps_log_t *log)
+void rps_stop_daemon(rps_log_t *log, const char *pid_path)
 {
-    char  buf[64];
-    int   fd, n;
-    pid_t pid;
+    char         buf[64];
+    int          fd, n;
+    pid_t        pid;
 
-    fd = open("run_pid.conf", O_RDONLY);
+    if (pid_path == NULL) return;
+
+    fd = open(pid_path, O_RDONLY);
     if (fd == -1) {
         rps_log_error(RPS_LOG_ERR, log, errno,
-                      "failed to open pid file \"run_pid.conf\"");
+                      "failed to open pid file \"%s\"", pid_path);
         return;
     }
     n = read(fd, buf, sizeof(buf) - 1);
@@ -240,12 +318,12 @@ void rps_stop_daemon(rps_log_t *log)
             if (kill(pid, 0) == -1 && errno == ESRCH) {
                 rps_log_error(RPS_LOG_INFO, log, 0,
                               "process %d exited", (int)pid);
-                unlink("run_pid.conf");
+                unlink(pid_path);
                 return;
             }
             {
                 struct timespec ts = { .tv_sec = 0, .tv_nsec = 10000000 };
-                nanosleep(&ts, NULL); /* 100ms */
+                nanosleep(&ts, NULL);
             }
         }
     }
@@ -253,7 +331,7 @@ void rps_stop_daemon(rps_log_t *log)
     rps_log_error(RPS_LOG_WARN, log, 0,
                   "process %d did not exit, sending SIGKILL", (int)pid);
     kill(pid, SIGKILL);
-    unlink("run_pid.conf");
+    unlink(pid_path);
 }
 
 static void rps_master_process_cycle(rps_cycle_t *cycle){
@@ -364,7 +442,7 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
             rps_log_error(RPS_LOG_INFO , cycle -> log, 0, "worker process has been created,[WORKER PID]: %d", getpid());
             close(pid_f.fd);
             rps_worker_process_cycle(cycle);
-            exit(0);
+            return;
         }
         pids[i] = pid;
      }
@@ -466,6 +544,7 @@ static void rps_master_process_cycle(rps_cycle_t *cycle){
          if (ccf->pid.data) {
              unlink((const char *)ccf->pid.data);
          }
+         return;
      }
 }
 static rps_int_t rps_worker_process_init(rps_cycle_t * cycle){
