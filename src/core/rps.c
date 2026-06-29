@@ -663,7 +663,7 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
     /* 主事件循环 */
     for (;;) {
         if (rps_terminate || rps_quit || rps_term) {
-            return;
+            break;
         }
 
         timer = rps_event_find_timer();
@@ -672,6 +672,27 @@ static void rps_worker_process_cycle(rps_cycle_t * cycle){
 
         rps_event_expire_timers();
     }
+
+    /* worker 退出清理：连接独立 pool + 监听 socket */
+    {
+        rps_event_container_t *ec;
+        rps_event_conf_t      *ev_conf;
+        rps_uint_t             i, n;
+
+        ec = cycle->conf_ctx[rps_event_module.index];
+        ev_conf = ec ? ec->event_conf[rps_event_core_module.ctx_index] : NULL;
+        n = ev_conf ? ev_conf->worker_connections : 512;
+
+        for (i = 0; i < n; i++) {
+            if (cycle->connections[i].fd > 0)
+                close(cycle->connections[i].fd);
+            if (cycle->connections[i].pool) {
+                rps_destroy_pool(cycle->connections[i].pool);
+                cycle->connections[i].pool = NULL;
+            }
+        }
+    }
+    /* cycle->pool 由 main 负责销毁 */
 }
 
 /*
