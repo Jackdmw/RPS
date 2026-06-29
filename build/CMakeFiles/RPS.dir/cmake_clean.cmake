@@ -51,6 +51,10 @@ file(REMOVE_RECURSE
   "CMakeFiles/RPS.dir/src/http/rps_http_response.c.o.d"
   "CMakeFiles/RPS.dir/src/http/rps_upstream.c.o"
   "CMakeFiles/RPS.dir/src/http/rps_upstream.c.o.d"
+  "CMakeFiles/RPS.dir/src/thread/rps_thread.c.o"
+  "CMakeFiles/RPS.dir/src/thread/rps_thread.c.o.d"
+  "CMakeFiles/RPS.dir/src/thread/rps_thread_proxy.c.o"
+  "CMakeFiles/RPS.dir/src/thread/rps_thread_proxy.c.o.d"
   "RPS"
   "RPS.pdb"
 )

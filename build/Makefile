@@ -753,6 +753,54 @@ src/http/rps_upstream.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/http/rps_upstream.c.s
 .PHONY : src/http/rps_upstream.c.s
 
+src/thread/rps_thread.o: src/thread/rps_thread.c.o
+.PHONY : src/thread/rps_thread.o
+
+# target to build an object file
+src/thread/rps_thread.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/thread/rps_thread.c.o
+.PHONY : src/thread/rps_thread.c.o
+
+src/thread/rps_thread.i: src/thread/rps_thread.c.i
+.PHONY : src/thread/rps_thread.i
+
+# target to preprocess a source file
+src/thread/rps_thread.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/thread/rps_thread.c.i
+.PHONY : src/thread/rps_thread.c.i
+
+src/thread/rps_thread.s: src/thread/rps_thread.c.s
+.PHONY : src/thread/rps_thread.s
+
+# target to generate assembly for a file
+src/thread/rps_thread.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/thread/rps_thread.c.s
+.PHONY : src/thread/rps_thread.c.s
+
+src/thread/rps_thread_proxy.o: src/thread/rps_thread_proxy.c.o
+.PHONY : src/thread/rps_thread_proxy.o
+
+# target to build an object file
+src/thread/rps_thread_proxy.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/thread/rps_thread_proxy.c.o
+.PHONY : src/thread/rps_thread_proxy.c.o
+
+src/thread/rps_thread_proxy.i: src/thread/rps_thread_proxy.c.i
+.PHONY : src/thread/rps_thread_proxy.i
+
+# target to preprocess a source file
+src/thread/rps_thread_proxy.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/thread/rps_thread_proxy.c.i
+.PHONY : src/thread/rps_thread_proxy.c.i
+
+src/thread/rps_thread_proxy.s: src/thread/rps_thread_proxy.c.s
+.PHONY : src/thread/rps_thread_proxy.s
+
+# target to generate assembly for a file
+src/thread/rps_thread_proxy.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/RPS.dir/build.make CMakeFiles/RPS.dir/src/thread/rps_thread_proxy.c.s
+.PHONY : src/thread/rps_thread_proxy.c.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -840,6 +888,12 @@ help:
 	@echo "... src/http/rps_upstream.o"
 	@echo "... src/http/rps_upstream.i"
 	@echo "... src/http/rps_upstream.s"
+	@echo "... src/thread/rps_thread.o"
+	@echo "... src/thread/rps_thread.i"
+	@echo "... src/thread/rps_thread.s"
+	@echo "... src/thread/rps_thread_proxy.o"
+	@echo "... src/thread/rps_thread_proxy.i"
+	@echo "... src/thread/rps_thread_proxy.s"
 .PHONY : help
 
 

@@ -78,6 +78,16 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
  /home/jack/RPS/src/event/rps_event.h \
  /home/jack/RPS/src/core/rps_config.h /home/jack/RPS/src/core/rps_log.h \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
+ /usr/include/pthread.h /usr/include/sched.h \
+ /usr/include/x86_64-linux-gnu/bits/sched.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_sched_param.h \
+ /usr/include/x86_64-linux-gnu/bits/cpu-set.h /usr/include/time.h \
+ /usr/include/x86_64-linux-gnu/bits/time.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_itimerspec.h \
+ /usr/include/x86_64-linux-gnu/bits/setjmp.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h \
  /home/jack/RPS/src/core/rps_core_module.h \
  /home/jack/RPS/src/http/rps_http_core.h \
  /home/jack/RPS/src/core/rps_conf_file.h \
@@ -95,7 +105,6 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
  /usr/include/x86_64-linux-gnu/bits/signum-arch.h \
  /usr/include/x86_64-linux-gnu/bits/types/sig_atomic_t.h \
  /usr/include/x86_64-linux-gnu/bits/types/sigset_t.h \
- /usr/include/x86_64-linux-gnu/bits/types/__sigset_t.h \
  /usr/include/x86_64-linux-gnu/bits/types/siginfo_t.h \
  /usr/include/x86_64-linux-gnu/bits/types/__sigval_t.h \
  /usr/include/x86_64-linux-gnu/bits/siginfo-arch.h \
@@ -109,17 +118,9 @@ CMakeFiles/RPS.dir/src/core/rps.c.o: /home/jack/RPS/src/core/rps.c \
  /usr/include/x86_64-linux-gnu/bits/signal_ext.h \
  /usr/include/x86_64-linux-gnu/sys/wait.h \
  /usr/include/x86_64-linux-gnu/bits/types/idtype_t.h \
- /usr/include/pthread.h /usr/include/sched.h \
- /usr/include/x86_64-linux-gnu/bits/sched.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_sched_param.h \
- /usr/include/x86_64-linux-gnu/bits/cpu-set.h /usr/include/time.h \
- /usr/include/x86_64-linux-gnu/bits/time.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct_itimerspec.h \
- /usr/include/x86_64-linux-gnu/bits/setjmp.h \
- /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h \
  /usr/include/netinet/in.h /usr/include/x86_64-linux-gnu/bits/in.h \
  /usr/include/endian.h /usr/include/x86_64-linux-gnu/bits/byteswap.h \
  /usr/include/x86_64-linux-gnu/bits/uintn-identity.h \
  /usr/include/arpa/inet.h \
- /home/jack/RPS/src/http/modules/rps_http_proxy_module.h
+ /home/jack/RPS/src/http/modules/rps_http_proxy_module.h \
+ /home/jack/RPS/src/thread/rps_thread.h

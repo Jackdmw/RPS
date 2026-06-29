@@ -106,6 +106,17 @@ CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o: \
  /home/jack/RPS/src/core/rps_connection.h \
  /home/jack/RPS/src/event/rps_event.h /home/jack/RPS/src/core/rps_log.h \
  /home/jack/RPS/src/core/rps_rbtree.h /home/jack/RPS/src/core/rps_cycle.h \
+ /usr/include/pthread.h /usr/include/sched.h \
+ /usr/include/x86_64-linux-gnu/bits/sched.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_sched_param.h \
+ /usr/include/x86_64-linux-gnu/bits/cpu-set.h /usr/include/time.h \
+ /usr/include/x86_64-linux-gnu/bits/time.h \
+ /usr/include/x86_64-linux-gnu/bits/timex.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct_itimerspec.h \
+ /usr/include/x86_64-linux-gnu/bits/setjmp.h \
+ /usr/include/x86_64-linux-gnu/bits/types/struct___jmp_buf_tag.h \
+ /usr/include/x86_64-linux-gnu/bits/pthread_stack_min-dynamic.h \
  /home/jack/RPS/src/core/rps_buf.h /home/jack/RPS/src/core/rps_string.h \
  /home/jack/RPS/src/http/rps_upstream.h \
  /home/jack/RPS/src/core/rps_array.h \
@@ -114,7 +125,8 @@ CMakeFiles/RPS.dir/src/http/modules/rps_http_proxy_module.c.o: \
  /home/jack/RPS/src/core/rps_module.h \
  /home/jack/RPS/src/http/modules/rps_http_proxy_module.h \
  /home/jack/RPS/src/http/modules/rps_http_core_module.h \
- /home/jack/RPS/src/http/rps_http_phases.h /usr/include/netinet/in.h \
+ /home/jack/RPS/src/http/rps_http_phases.h \
+ /home/jack/RPS/src/thread/rps_thread.h /usr/include/netinet/in.h \
  /usr/include/x86_64-linux-gnu/bits/in.h /usr/include/arpa/inet.h \
  /usr/include/netdb.h /usr/include/rpc/netdb.h \
  /usr/include/x86_64-linux-gnu/bits/types/sigevent_t.h \
